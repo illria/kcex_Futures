@@ -10,14 +10,44 @@ Spec: [docs/tasks/TASK-001.md](docs/tasks/TASK-001.md)
 
 Do not work on real order submission yet.
 
+## Next
+
+### TASK-002 — Local Dashboard + Encrypted Credential Vault
+
+Spec: [docs/tasks/TASK-002.md](docs/tasks/TASK-002.md)
+
+Build:
+
+- local web UI on 127.0.0.1:6666
+- vault unlock flow
+- encrypted KCEX account/password storage
+- fake auth state machine
+- fake email OTP flow
+- realtime WebSocket dashboard shell
+
+No real KCEX login yet.
+
+### TASK-003 — KCEX Login + Email OTP Integration
+
+Spec: [docs/tasks/TASK-003.md](docs/tasks/TASK-003.md)
+
+Connect Playwright login to:
+
+- encrypted account/password
+- email verification-code UI
+- encrypted session restore
+- auth/session realtime status
+
+Real local browser verification remains deferred until explicitly approved.
+
 ## Planned
 
-- TASK-002 — KCEX Futures read-only state extractor
-- TASK-003 — local config + SQLite persistence
-- TASK-004 — paper trading lifecycle
-- TASK-005 — RiskEngine + kill switch
-- TASK-006 — assisted single live order flow
-- TASK-007 — position confirmation + UNKNOWN state
-- TASK-008 — TP/SL management
-- TASK-009 — daily random scheduler
-- TASK-010 — long-running resilience and recovery
+- TASK-004 — KCEX Futures read-only state extractor
+- TASK-005 — local SQLite trading persistence
+- TASK-006 — paper trading lifecycle
+- TASK-007 — RiskEngine + kill switch
+- TASK-008 — assisted single live order flow
+- TASK-009 — position confirmation + UNKNOWN state
+- TASK-010 — TP/SL management
+- TASK-011 — daily random scheduler
+- TASK-012 — long-running resilience and recovery
