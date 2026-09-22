@@ -18,6 +18,38 @@
 
 > 重要：本项目采用浏览器自动化，而不是 KCEX 官方公开交易 API。只有在账户、地区、平台规则和 KCEX 授权允许的前提下才能启用真实交易。开发与测试阶段禁止自动开启实盘。
 
+## 开发环境原则：GitHub Actions Only
+
+为了不影响用户本机环境，开发阶段实行：
+
+> **本机只编辑代码，不安装、不构建、不测试、不启动 Playwright。所有自动测试、TypeScript 检查和依赖安装验证均在 GitHub Actions 中运行。**
+
+编码代理不得在用户机器运行：
+
+```
+npm install
+npm ci
+npm run dev
+npm run build
+npm run typecheck
+npm test
+npx playwright ...
+```
+
+也不得安装 Node/Playwright 浏览器/系统依赖或执行数据库迁移。
+
+真实 KCEX 登录态、Persistent Context 和实际页面 DOM 无法安全放入公共 GitHub Actions，因此这部分采用：
+
+```
+GitHub Actions 自动验收
+        ↓
+代码审核
+        ↓
+标记需要人工浏览器验证的项目为 DEFERRED
+        ↓
+只有用户明确允许时才进行后续本机实测
+```
+
 ## 当前状态
 
 项目刚初始化。现在还没有任何真实下单代码。
@@ -25,11 +57,9 @@
 开发顺序严格遵循：
 
 ```
-浏览器启动
+浏览器启动架构
   ↓
-复用人工登录状态
-  ↓
-只读识别 KCEX Futures 页面
+只读页面识别
   ↓
 读取 GPS_USDT / 余额 / 杠杆 / 仓位
   ↓
@@ -59,6 +89,7 @@ TP / SL
 - Zod
 - Pino
 - Vitest
+- GitHub Actions
 
 第一版不做复杂 Web UI，先完成 CLI + Playwright + SQLite 的可靠交易闭环。
 
@@ -69,9 +100,8 @@ TP / SL
    - 上次运行即使处于实盘状态，也不能自动恢复。
 
 2. **不保存 KCEX 用户名和密码**
-   - 使用 Playwright Persistent Context。
-   - 第一次由用户人工登录。
-   - 后续复用本地浏览器登录状态。
+   - 未来运行时使用 Playwright Persistent Context。
+   - 用户名密码不进入仓库、CI 或配置模板。
 
 3. **单仓位**
    - 第一版同一时间最多 1 个 GPS_USDT 仓位。
@@ -87,22 +117,26 @@ TP / SL
 6. **所有真实交易必须可审计**
    - 保存时间、交易对、方向、保证金、杠杆、开仓价、仓位数量、状态、PnL、错误信息与关键截图。
 
+7. **CI 与真实账户隔离**
+   - GitHub Actions 不保存 KCEX cookies、密码、浏览器 profile 或认证信息。
+   - DOM 判断优先使用安全静态 fixtures/mocks 做 CI 测试。
+
 ## 文档
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — 系统架构与状态机
 - [ROADMAP.md](ROADMAP.md) — 分阶段开发路线
 - [TASKS.md](TASKS.md) — 当前任务与验收顺序
 - [SAFETY.md](SAFETY.md) — 实盘安全边界
-- [AGENTS.md](AGENTS.md) — 给本地 ChatGPT / Codex 的开发规则
+- [AGENTS.md](AGENTS.md) — 编码代理规则
 - [docs/tasks/TASK-001.md](docs/tasks/TASK-001.md) — 第一项开发任务
 
 ## 第一目标
 
-先完成：
+先完成代码层面的：
 
-> 打开本地 Playwright 浏览器 → 用户人工登录 KCEX → 程序确认登录成功 → 自动进入 GPS_USDT Futures 页面 → 只读输出页面状态 → 全程不存在任何下单行为。
+> Persistent Browser 架构 → KCEX 只读适配器 → GPS_USDT / 登录状态识别 → fixture 测试 → GitHub Actions 全绿 → 全程不存在任何下单行为。
 
-完成并人工确认 Task 001 后，再开始读取余额、杠杆与仓位。
+真实登录和实际 KCEX 页面验证暂缓，不要求编码代理在本机运行。
 
 ## 实盘边界
 
