@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "feat/**"
+      - "fix/**"
+      - "task/**"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Typecheck and Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect Node project
+        id: node_project
+        shell: bash
+        run: |
+          if [ -f package.json ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Documentation-only repository state: package.json not created yet."
+          fi
+
+      - name: Setup Node.js 22
+        if: steps.node_project.outputs.exists == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Require lockfile
+        if: steps.node_project.outputs.exists == 'true'
+        shell: bash
+        run: |
+          test -f package-lock.json || {
+            echo "::error::package-lock.json is required for reproducible CI."
+            exit 1
+          }
+
+      - name: Install dependencies
+        if: steps.node_project.outputs.exists == 'true'
+        run: npm ci
+
+      - name: Typecheck
+        if: steps.node_project.outputs.exists == 'true'
+        run: npm run typecheck
+
+      - name: Unit and fixture tests
+        if: steps.node_project.outputs.exists == 'true'
+        env:
+          LIVE_TRADING: "false"
+        run: npm test
+
+      - name: Safety summary
+        shell: bash
+        run: |
+          echo "CI runs without KCEX credentials or authenticated browser state."
+          echo "LIVE_TRADING=false"
+          echo "No real KCEX order execution belongs in CI."
