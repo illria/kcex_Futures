@@ -13,6 +13,8 @@ const baseUrlSchema = z
   }, "KCEX_BASE_URL must be an HTTP(S) URL without embedded credentials.");
 
 const environmentSchema = z.object({
+  // SECURITY TODO(TASK-003): before adding credential autofill, restrict this
+  // host to a confirmed official KCEX domain; never autofill to a custom host.
   KCEX_BASE_URL: z.preprocess(
     (value) => (value === "" ? undefined : value),
     baseUrlSchema.optional(),

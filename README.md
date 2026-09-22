@@ -2,10 +2,17 @@
 
 本仓库用于开发一个**本地运行的 KCEX Futures Playwright 自动化工具**。
 
-第一阶段只针对一个最小闭环：
+第一版目标：
 
+- 本地实时 Web UI：`http://127.0.0.1:6666`
+- 本地密钥解锁
+- KCEX 账号 / 密码录入
+- 本地加密保存凭据
+- KCEX 邮箱验证码实时输入
+- 登录状态 / 浏览器状态实时显示
+- GPS_USDT 实时价格、余额、仓位、PnL
+- 交易计划与运行日志实时显示
 - 交易对：`GPS_USDT`
-- 合约：KCEX 永续合约
 - 保证金模式：逐仓
 - 杠杆：10x
 - 单次保证金：默认 50 USDT
@@ -13,135 +20,187 @@
 - 方向：可配置为随机 LONG / SHORT
 - 同时最大持仓：1
 - 自动设置 TP / SL
-- 完整日志、截图、状态恢复与风控
-- **默认只读 / Paper 模式，默认禁止实盘**
+- **默认禁止实盘**
 
-> 重要：本项目采用浏览器自动化，而不是 KCEX 官方公开交易 API。只有在账户、地区、平台规则和 KCEX 授权允许的前提下才能启用真实交易。开发与测试阶段禁止自动开启实盘。
+> 重要：本项目采用浏览器自动化，而不是 KCEX 官方公开交易 API。只有在账户、地区、平台规则和 KCEX 授权允许的前提下才能启用真实交易。
 
-## 当前状态
+## 登录设计
 
-项目当前只实现 TASK-001 的浏览器启动与只读页面识别。
+不再依赖“打开浏览器后人工在 KCEX 页面完成全部登录”。
 
-现在没有下单、仓位修改、杠杆设置或保证金模式设置代码。
-登录状态与 GPS_USDT 页面识别使用保守证据；KCEX 实际页面 DOM 和持久化登录状态仍待人工验证。
-
-开发顺序严格遵循：
+最终应用提供自己的本地登录面板：
 
 ```
-浏览器启动
-  ↓
-复用人工登录状态
-  ↓
-只读识别 KCEX Futures 页面
-  ↓
+本地密钥
+KCEX 账号
+KCEX 密码
+邮箱验证码（需要时出现）
+```
+
+流程：
+
+```
+打开 http://127.0.0.1:6666
+        ↓
+输入本地密钥解锁 Vault
+        ↓
+读取加密保存的 KCEX 凭据
+或首次输入账号密码
+        ↓
+Playwright 登录 KCEX
+        ↓
+如果要求邮箱验证码
+        ↓
+前端实时出现验证码输入框
+        ↓
+用户输入验证码
+        ↓
+Playwright 提交
+        ↓
+登录成功
+        ↓
+进入实时交易 Dashboard
+```
+
+安全要求：
+
+- 本地密钥本身不落盘
+- KCEX 密码只能加密保存
+- 保存后前端不能读取完整密码
+- OTP 验证码绝不持久化
+- 密码、OTP、Cookie、Token 不进入日志
+- GitHub Actions 不接触真实 KCEX 凭据
+- Dashboard 默认只监听 `127.0.0.1`
+
+详细方案：[docs/FRONTEND_AUTH.md](docs/FRONTEND_AUTH.md)
+
+## 实时 Dashboard
+
+首页至少展示：
+
+```
+KCEX：已连接 / 需要登录 / 需要验证码
+Browser：运行中 / 已停止
+
+模式：PAPER / LIVE
+自动交易：运行 / 暂停 / HALTED
+
+GPS_USDT
+现价 / 标记价格
+
+可用 USDT
+逐仓 / 全仓
+杠杆
+当前方向
+开仓价格
+仓位价值
+未实现盈亏
+
+今日计划交易次数
+已完成次数
+下一次计划交易时间
+
+实时运行日志
+```
+
+后端通过 WebSocket 向前端推送实时状态。
+
+## 开发环境原则：GitHub Actions Only
+
+为了不影响用户本机环境：
+
+> **本机只编辑代码，不安装、不构建、不测试、不启动 Playwright。自动测试、TypeScript 检查和依赖安装验证均在 GitHub Actions 中运行。**
+
+编码代理不得在用户机器运行：
+
+```
+npm install
+npm ci
+npm run dev
+npm run build
+npm run typecheck
+npm test
+npx playwright ...
+```
+
+真实 KCEX 登录和实际页面 DOM 验证统一标记为 deferred，直到用户明确允许后续本机运行。
+
+## 当前开发顺序
+
+```
+TASK-001
+Playwright / KCEX 只读基础架构
+        ↓
+TASK-002
+本地实时 Dashboard
++ 加密 Vault
++ Fake Auth / OTP
+        ↓
+TASK-003
+KCEX 账号密码登录
++ Email OTP
++ Session 恢复
+        ↓
+TASK-004
 读取 GPS_USDT / 余额 / 杠杆 / 仓位
-  ↓
+        ↓
 Paper Trading
-  ↓
-风险引擎
-  ↓
-人工确认的单次真实开仓
-  ↓
-成交确认
-  ↓
+        ↓
+RiskEngine
+        ↓
+受控真实交易
+        ↓
 TP / SL
-  ↓
-随机调度
-  ↓
-长期运行
+        ↓
+随机 1–10 单/天
 ```
 
 任何阶段未验收，不进入下一阶段。
+
+## TASK-001 当前状态与安全注记
+
+TASK-001 提供只读浏览器启动与页面状态识别 scaffold。真实登录、持久化会话复用和 KCEX 实际 GPS_USDT DOM 验证均为 **DEFERRED MANUAL VERIFICATION**。Persistent Browser 当前仅为 TASK-001 scaffold；TASK-003 将依据 [docs/FRONTEND_AUTH.md](docs/FRONTEND_AUTH.md)，优先采用加密的 Playwright storage state。
+
+在 TASK-003 实现账号密码自动填入之前，必须先将 `KCEX_BASE_URL` 限制为已确认的 KCEX 官方域名；绝不能向任意自定义 host 自动填入凭据。当前 TASK-001 不实现凭据填写。
 
 ## 推荐技术栈
 
 - Node.js 22+
 - TypeScript
 - Playwright
+- React
+- Fastify
+- WebSocket
 - SQLite
 - Zod
 - Pino
 - Vitest
-
-第一版不做复杂 Web UI，先完成 CLI + Playwright + SQLite 的可靠交易闭环。
-
-## 核心原则
-
-1. **默认不实盘**
-   - 每次程序启动都必须回到 `LIVE_TRADING=false`。
-   - 上次运行即使处于实盘状态，也不能自动恢复。
-
-2. **不保存 KCEX 用户名和密码**
-   - 使用 Playwright Persistent Context。
-   - 第一次由用户人工登录。
-   - 后续复用本地浏览器登录状态。
-
-3. **单仓位**
-   - 第一版同一时间最多 1 个 GPS_USDT 仓位。
-   - 已有仓位时，新任务只能跳过，不能叠仓。
-
-4. **失败即停止，不盲目重试**
-   - 页面结构异常、登录失效、风控弹窗、验证码、交易对不匹配、杠杆不匹配时直接阻止下单。
-
-5. **点击不等于成交**
-   - 点击开仓后必须通过仓位区域确认真实成交。
-   - 无法确认时状态进入 `UNKNOWN`，禁止再次开仓。
-
-6. **所有真实交易必须可审计**
-   - 保存时间、交易对、方向、保证金、杠杆、开仓价、仓位数量、状态、PnL、错误信息与关键截图。
-
-## 文档
-
-- [ARCHITECTURE.md](ARCHITECTURE.md) — 系统架构与状态机
-- [ROADMAP.md](ROADMAP.md) — 分阶段开发路线
-- [TASKS.md](TASKS.md) — 当前任务与验收顺序
-- [SAFETY.md](SAFETY.md) — 实盘安全边界
-- [AGENTS.md](AGENTS.md) — 给本地 ChatGPT / Codex 的开发规则
-- [docs/tasks/TASK-001.md](docs/tasks/TASK-001.md) — 第一项开发任务
-
-## 第一目标
-
-先完成：
-
-> 打开本地 Playwright 浏览器 → 用户人工登录 KCEX → 程序确认登录成功 → 自动进入 GPS_USDT Futures 页面 → 只读输出页面状态 → 全程不存在任何下单行为。
-
-完成并人工确认 Task 001 后，再开始读取余额、杠杆与仓位。
+- GitHub Actions
 
 ## 实盘边界
 
-在明确进入实盘阶段之前，代码中不应存在任何可以直接执行 `LONG` / `SHORT` 提交的默认路径。
+登录成功不代表允许交易。
 
-最终即使支持实盘，也必须满足：
+最终状态必须严格分开：
 
 ```
-配置允许
-+ 命令行显式 --live
-+ 人工二次确认
-+ RiskEngine 通过
-+ 页面状态通过
-+ 交易对通过
-+ 杠杆通过
-+ 保证金通过
-+ 当前仓位检查通过
-= 才允许提交
+KCEX AUTHENTICATED
+        ↓
+READ ONLY READY
+        ↓
+PAPER READY
+        ↓
+用户显式启用 LIVE
+        ↓
+RiskEngine 检查
+        ↓
+LIVE READY
 ```
 
-本项目的目标不是“尽快点出一笔订单”，而是先把**状态识别、失败保护和可恢复性**做对。
+每次程序重启：
 
-## Task 001 使用说明
+```
+LIVE_TRADING=false
+```
 
-需要 Node.js 22.12 或更新的 22.x 版本。首次使用时复制 .env.example 为 .env，再安装依赖并安装 Playwright Chromium：
-
-- npm install
-- npm run browser:install
-
-启动只读检查：npm run dev
-
-浏览器以 headed 模式打开，持久化 profile 默认保存在 data/browser-profile/。如需登录，请只在浏览器里手动操作；程序不会读取或保存账号密码。运行后可以再次启动程序复用 profile。
-
-检查和 fixture 测试由 .github/workflows/ci.yml 执行：
-
-- npm run typecheck
-- npm test
-
-Task 001 始终强制 LIVE_TRADING=false。CI 只运行 fixture/mock DOM 测试，不启动浏览器、不访问 KCEX，也不读取真实用户认证信息。当前 selector 候选和 URL 路径尚未通过真实 KCEX 页面验证。
+即使 KCEX Session 仍有效，也绝不能自动恢复实盘。

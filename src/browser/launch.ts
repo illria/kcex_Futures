@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { chromium, type BrowserContext } from "playwright";
 import type { AppConfig } from "../config/schema.js";
 
+/** TASK-001 scaffold only; TASK-003 should prefer encrypted storage state. */
 export async function launchPersistentBrowser(
   config: AppConfig,
 ): Promise<BrowserContext> {
