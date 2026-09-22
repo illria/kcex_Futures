@@ -4,6 +4,8 @@
 
 Build a local KCEX Futures automation tool around Playwright with strong separation between:
 
+- local dashboard
+- secure credential vault
 - browser/session control
 - KCEX page adapters
 - read-only state extraction
@@ -16,37 +18,29 @@ Build a local KCEX Futures automation tool around Playwright with strong separat
 ## Proposed structure
 
 ```
-src/
-  browser/
-    launch.ts
-    session.ts
-  kcex/
-    urls.ts
-    selectors.ts
-    page.ts
-    state.ts
-  trading/
-    models.ts
-    executor.ts
-    position.ts
-  scheduler/
-    daily-plan.ts
-    runner.ts
-  risk/
-    engine.ts
-    rules.ts
-  storage/
-    db.ts
-    schema.ts
-  config/
-    schema.ts
-    load.ts
-  logging/
-    logger.ts
-  utils/
+apps/
+  web/
+    src/
+  server/
+    src/
+      api/
+      auth/
+      browser/
+      kcex/
+      realtime/
+      trading/
+      scheduler/
+      risk/
+      storage/
+      logging/
+
+packages/
+  shared/
+    src/
 
 tests/
   unit/
+  fixtures/
   integration/
 
 docs/
@@ -57,14 +51,96 @@ logs/
 screenshots/
 ```
 
-## Runtime state machine
+## Local dashboard
+
+Default:
+
+```
+http://127.0.0.1:6666
+```
+
+The service binds to loopback by default.
+
+Frontend responsibilities:
+
+- unlock local vault
+- enter/save KCEX account and password
+- enter email OTP when requested
+- show auth/session status
+- show live market/account/position/scheduler state
+- show logs
+- expose pause/resume and later live-arm controls
+
+The frontend must never receive a stored plaintext password after it has been saved.
+
+## Secure vault
+
+The application uses a local master key supplied at runtime.
+
+Recommended design:
+
+```
+master key
+  ↓
+Argon2id / scrypt
+  ↓
+AES-256-GCM key
+  ↓
+encrypted vault
+```
+
+Vault may contain:
+
+- KCEX account
+- KCEX password
+- encrypted Playwright session/storage state
+
+Rules:
+
+- master key is never persisted
+- password is never stored plaintext
+- OTP is never persisted
+- credentials never enter GitHub Actions
+- secrets are redacted from logs
+
+## Authentication state machine
+
+```
+APP_LOCKED
+  ↓
+VAULT_UNLOCKED
+  ↓
+SESSION_CHECK
+  ├── session valid ─────────────→ AUTHENTICATED
+  └── no/invalid session
+             ↓
+       CREDENTIALS_REQUIRED
+             ↓
+         LOGGING_IN
+           ├── success ─────────→ AUTHENTICATED
+           ├── email OTP ───────→ OTP_REQUIRED
+           ├── captcha ─────────→ MANUAL_CHALLENGE
+           └── failure ─────────→ AUTH_FAILED
+
+OTP_REQUIRED
+  ↓
+SUBMITTING_OTP
+  ├── success ──────────────────→ AUTHENTICATED
+  └── failure ──────────────────→ OTP_REQUIRED / AUTH_FAILED
+```
+
+Unknown auth state must fail closed.
+
+Captcha/security challenges must not be bypassed automatically.
+
+## Runtime trading state machine
 
 ```
 BOOT
   ↓
-BROWSER_READY
+APP_LOCKED
   ↓
-LOGIN_REQUIRED / LOGIN_OK
+AUTHENTICATED
   ↓
 FUTURES_PAGE_READY
   ↓
@@ -100,19 +176,41 @@ HALTED
 
 Any unknown state must fail closed.
 
+## Realtime event architecture
+
+Backend publishes versioned events over WebSocket.
+
+Examples:
+
+```
+auth.state
+market.snapshot
+account.balance
+position.changed
+order.changed
+scheduler.plan
+trade.opened
+trade.closed
+risk.blocked
+system.log
+system.heartbeat
+```
+
+The frontend consumes these events to maintain the live dashboard.
+
 ## Key design decisions
 
 ### 1. KCEX adapter layer
 
-All page-specific selectors and interaction logic must live under `src/kcex/`.
+All page-specific selectors and interaction logic must live under the KCEX adapter.
 
 Do not spread selectors through strategy or scheduler code.
 
-### 2. Persistent browser profile
+### 2. Session persistence
 
-Use Playwright persistent context and a local profile directory.
+Prefer encrypted Playwright storage state when practical.
 
-Credentials are entered manually by the user. The app must not ask for or persist username/password.
+If KCEX requires persistent browser-profile state that storageState cannot preserve, the profile must be treated as sensitive local data and never committed/uploaded.
 
 ### 3. Read-only before write
 
@@ -147,13 +245,14 @@ UNKNOWN
 
 If confirmation cannot be obtained, mark `UNKNOWN` and block further entries.
 
-### 5. Live trading gate
+### 5. Authentication != live trading
 
-Live execution must require all of:
+Successful KCEX login only enables read-only access.
+
+Live execution must separately require:
 
 - config allows live mode
-- explicit CLI flag
-- explicit typed confirmation
+- explicit runtime arm
 - RiskEngine approval
 - correct symbol
 - correct leverage
@@ -165,16 +264,21 @@ Live execution must require all of:
 
 On every process restart:
 
+- master key must be entered again
 - live mode resets to OFF
-- schedule may be restored
-- logs and history may be restored
-- positions must be re-detected from KCEX page before any further action
+- encrypted session may be restored after vault unlock
+- schedule/history may be restored
+- positions must be re-detected from KCEX before any further action
 - no persisted flag may silently re-arm live trading
 
 ## First-version scope
 
 Supported:
 
+- local dashboard on port 6666
+- encrypted credential vault
+- email OTP input UI
+- realtime WebSocket status
 - one symbol: `GPS_USDT`
 - isolated mode
 - 10x leverage
