@@ -4,9 +4,9 @@ export const KCEX_SELECTORS = {
   accountMenu:
     '[data-testid="user-menu"], [data-testid="account-menu"], [aria-label="Account menu"], [aria-label="User menu"]',
   loginForm:
-    'form[action*="login" i], [data-testid="login-form"]',
+    'form[action*="login"], [data-testid="login-form"]',
   loginControl:
-    'a[href*="login" i], button[data-testid="login-button"], [aria-label*="log in" i], [aria-label*="sign in" i]',
+    'a[href*="login"], button[data-testid="login-button"], [aria-label*="log in"], [aria-label*="sign in"]',
   symbolLabel:
     '[data-testid="contract-symbol"], [data-testid="futures-symbol"], [data-testid="trading-pair"], [data-role="contract-symbol"], [aria-label="Current contract"], h1',
 } as const;

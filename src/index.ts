@@ -40,7 +40,7 @@ function printSummary(
   }
 }
 
-async function recheckAfterManualLogin(page: Page): Promise<boolean> {
+async function recheckAfterManualLogin(): Promise<boolean> {
   if (!process.stdin.isTTY) return false;
 
   const terminal = createInterface({
@@ -96,7 +96,7 @@ async function run(): Promise<void> {
 
     if (
       result.login.status === "LOGGED_OUT" &&
-      (await recheckAfterManualLogin(page))
+      (await recheckAfterManualLogin())
     ) {
       result = await inspectOnce(page, config.KCEX_BASE_URL);
     }

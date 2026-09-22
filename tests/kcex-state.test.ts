@@ -11,7 +11,7 @@ function fixture(name: string, url: string) {
   window.document.write(html);
 
   return {
-    evidence: collectPageEvidence(window.document, url),
+    evidence: collectPageEvidence(window.document as unknown as Document, url),
     close: () => window.close(),
   };
 }

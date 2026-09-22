@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   task-001:
@@ -17,27 +17,15 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out task branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
-
-      - name: Resolve and commit the initial npm lockfile
-        run: |
-          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package-lock.json
-          if ! git diff --cached --quiet; then
-            git commit -m "chore: add npm lockfile"
-            git push origin "HEAD:$BRANCH_NAME"
-          fi
-        env:
-          BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+          package-manager-cache: false
 
       - name: Install locked dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
