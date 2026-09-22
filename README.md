@@ -20,7 +20,10 @@
 
 ## 当前状态
 
-项目刚初始化。现在还没有任何真实下单代码。
+项目当前只实现 TASK-001 的浏览器启动与只读页面识别。
+
+现在没有下单、仓位修改、杠杆设置或保证金模式设置代码。
+登录状态与 GPS_USDT 页面识别使用保守证据；KCEX 实际页面 DOM 和持久化登录状态仍待人工验证。
 
 开发顺序严格遵循：
 
@@ -124,3 +127,21 @@ TP / SL
 ```
 
 本项目的目标不是“尽快点出一笔订单”，而是先把**状态识别、失败保护和可恢复性**做对。
+
+## Task 001 使用说明
+
+需要 Node.js 22.12 或更新的 22.x 版本。首次使用时复制 .env.example 为 .env，再安装依赖并安装 Playwright Chromium：
+
+- npm install
+- npm run browser:install
+
+启动只读检查：npm run dev
+
+浏览器以 headed 模式打开，持久化 profile 默认保存在 data/browser-profile/。如需登录，请只在浏览器里手动操作；程序不会读取或保存账号密码。运行后可以再次启动程序复用 profile。
+
+检查和 fixture 测试由 .github/workflows/ci.yml 执行：
+
+- npm run typecheck
+- npm test
+
+Task 001 始终强制 LIVE_TRADING=false。CI 只运行 fixture/mock DOM 测试，不启动浏览器、不访问 KCEX，也不读取真实用户认证信息。当前 selector 候选和 URL 路径尚未通过真实 KCEX 页面验证。
