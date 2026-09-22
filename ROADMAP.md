@@ -1,5 +1,13 @@
 # Roadmap
 
+## Global development rule
+
+All automated validation runs in GitHub Actions.
+
+The coding agent must not run install, build, typecheck, tests, Playwright, or KCEX automation on the user's machine unless the user explicitly changes this policy.
+
+Authenticated live-browser verification is tracked separately as deferred manual verification.
+
 ## Phase 0 — Bootstrap
 
 - TypeScript project
@@ -9,23 +17,24 @@
 - Pino
 - SQLite dependency
 - lint/typecheck/test scripts
-- local directories ignored by git
+- GitHub Actions CI
+- local runtime directories ignored by git
 
 Exit criteria:
-- install succeeds
-- typecheck succeeds
-- tests succeed
-- project starts without placing orders
+- GitHub Actions dependency install succeeds
+- GitHub Actions typecheck succeeds
+- GitHub Actions tests succeed
+- no local development command was executed
 
-## Phase 1 — Task 001: browser + read-only KCEX session
+## Phase 1 — Task 001: browser architecture + read-only KCEX detection
 
-- launch persistent browser
-- reuse local user-data directory
-- open KCEX
-- detect whether login is active
-- navigate to GPS_USDT futures page
-- print read-only status
-- capture diagnostic screenshot on failure
+- implement persistent-browser launcher
+- implement KCEX URL/navigation adapter
+- implement login-state classifier
+- implement GPS_USDT page classifier
+- use fixture/mock DOM tests
+- keep live trading OFF
+- defer real authenticated browser verification
 
 No trading interaction.
 
@@ -41,7 +50,7 @@ Read and normalize:
 - current position
 - active orders
 
-Add selector diagnostics.
+Build fixture-based selector diagnostics first. Real authenticated verification remains a separate user-approved step.
 
 ## Phase 3 — paper engine
 
@@ -50,7 +59,7 @@ Add selector diagnostics.
 - simulated TP/SL
 - persistence
 - restart recovery
-- at least 1000 lifecycle simulations
+- at least 1000 lifecycle simulations in CI
 
 ## Phase 4 — risk engine
 
@@ -66,9 +75,11 @@ Rules:
 - daily loss cap
 - kill switch
 
+All pure risk behavior must be exhaustively testable in CI.
+
 ## Phase 5 — one-shot assisted live order
 
-Only after manual approval.
+Only after explicit user approval and after the earlier phases are reviewed.
 
 - set isolated
 - set leverage
@@ -78,6 +89,8 @@ Only after manual approval.
 - human confirmation
 - submit once
 - no retry on uncertain result
+
+This phase inherently requires a later real-machine manual verification step; it is not executed by GitHub Actions.
 
 ## Phase 6 — position confirmation
 
@@ -105,6 +118,8 @@ Must distinguish:
 - skip if an existing position is open
 - persist daily plan
 - regenerate next day
+
+Scheduler logic must be CI-testable with deterministic seeded/controlled clocks where appropriate.
 
 ## Phase 9 — unattended hardening
 
