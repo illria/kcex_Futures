@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "start": "node dist/apps/server/src/index.js",
-    "build": "tsc -p tsconfig.json && vite build --config apps/web/vite.config.ts",
+    "build": "tsc -p tsconfig.build.json && vite build --config apps/web/vite.config.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p apps/web/tsconfig.json",
     "test": "vitest run",
     "browser:install": "playwright install chromium"
