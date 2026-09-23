@@ -163,6 +163,12 @@ TASK-001 提供只读浏览器启动与页面状态识别 scaffold。真实登�
 
 在 TASK-003 实现账号密码自动填入之前，必须先将 `KCEX_BASE_URL` 限制为已确认的 KCEX 官方域名；绝不能向任意自定义 host 自动填入凭据。当前 TASK-001 不实现凭据填写。
 
+## TASK-002 Dashboard + Vault
+
+TASK-002 使用 React + TypeScript 和本地 TypeScript 服务提供 Dashboard / Vault scaffold，默认只绑定 `127.0.0.1:6666`。凭据由 scrypt 派生密钥并使用 AES-256-GCM 加密保存；前端只收到 `credentialsSaved` 状态。登录与六位验证码由 FakeAuthAdapter 模拟，验证码只在短时内存状态中处理。
+
+Dashboard 和 WebSocket 当前只提供 `GPS_USDT` fixture/mock 数据，`LIVE_TRADING=false`。本阶段不连接 KCEX、不启动真实浏览器、不提交订单；真实 KCEX 登录、Email OTP、持久化会话和实际页面数据属于后续任务。
+
 ## 推荐技术栈
 
 - Node.js 22+

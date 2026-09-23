@@ -7,10 +7,10 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "dev": "tsx src/index.ts",
-    "start": "node dist/src/index.js",
-    "build": "tsc",
-    "typecheck": "tsc --noEmit",
+    "dev": "node scripts/dev.mjs",
+    "start": "node dist/apps/server/src/index.js",
+    "build": "tsc -p tsconfig.build.json && vite build --config apps/web/vite.config.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p apps/web/tsconfig.json",
     "test": "vitest run",
     "browser:install": "playwright install chromium"
   },
@@ -18,13 +18,20 @@
     "dotenv": "18.0.2",
     "pino": "10.3.1",
     "playwright": "1.63.0",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
+    "ws": "8.21.3",
     "zod": "4.6.5"
   },
   "devDependencies": {
     "@types/node": "22.20.3",
+    "@types/react": "19.1.8",
+    "@types/react-dom": "19.1.7",
+    "@types/ws": "8.18.1",
     "happy-dom": "20.14.5",
     "tsx": "4.23.15",
     "typescript": "7.0.2",
+    "vite": "8.3.0",
     "vitest": "5.0.1"
   }
 }

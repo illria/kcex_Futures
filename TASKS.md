@@ -1,18 +1,18 @@
 # Tasks
 
-## Current
+## Completed
 
 ### TASK-001 — KCEX Playwright Bootstrap & Read-Only Browser Session
 
-Status: READY
+Status: COMPLETE
 
 Spec: [docs/tasks/TASK-001.md](docs/tasks/TASK-001.md)
 
 Do not work on real order submission yet.
 
-## Next
-
 ### TASK-002 — Local Dashboard + Encrypted Credential Vault
+
+Status: COMPLETE
 
 Spec: [docs/tasks/TASK-002.md](docs/tasks/TASK-002.md)
 
@@ -26,6 +26,8 @@ Build:
 - realtime WebSocket dashboard shell
 
 No real KCEX login yet.
+
+## Next
 
 ### TASK-003 — KCEX Login + Email OTP Integration
 
