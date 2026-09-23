@@ -1,7 +1,6 @@
 import { randomBytes, scrypt, createCipheriv, createDecipheriv } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { promisify } from "node:util";
 import { z } from "zod";
 
 const SCRYPT_N = 32_768;
@@ -13,7 +12,6 @@ const IV_LENGTH = 12;
 const TAG_LENGTH = 16;
 const SCRYPT_MAXMEM = 64 * 1024 * 1024;
 const VAULT_AAD = Buffer.from("kcex-futures-vault:v1", "utf8");
-const scryptAsync = promisify(scrypt);
 
 const CredentialSchema = z
   .object({ account: z.string().trim().min(1).max(320), password: z.string().min(1).max(4096) })
@@ -49,12 +47,17 @@ export class VaultLockedError extends Error {
 }
 
 async function deriveKey(masterKey: Buffer, salt: Buffer): Promise<Buffer> {
-  return (await scryptAsync(masterKey, salt, KEY_LENGTH, {
-    N: SCRYPT_N,
-    r: SCRYPT_R,
-    p: SCRYPT_P,
-    maxmem: SCRYPT_MAXMEM,
-  })) as Buffer;
+  return new Promise<Buffer>((resolve, reject) => {
+    scrypt(masterKey, salt, KEY_LENGTH, {
+      N: SCRYPT_N,
+      r: SCRYPT_R,
+      p: SCRYPT_P,
+      maxmem: SCRYPT_MAXMEM,
+    }, (error, derivedKey) => {
+      if (error) reject(error);
+      else resolve(derivedKey);
+    });
+  });
 }
 
 function assertEnvelopeLengths(envelope: EncryptedVaultEnvelope): void {
