@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - "codex/**"
       - "feat/**"
       - "fix/**"
       - "task/**"
@@ -15,7 +14,7 @@ permissions:
 
 jobs:
   validate:
-    name: Typecheck and Tests
+    name: Typecheck, Build and Tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -59,6 +58,10 @@ jobs:
       - name: Typecheck
         if: steps.node_project.outputs.exists == 'true'
         run: npm run typecheck
+
+      - name: Frontend build
+        if: steps.node_project.outputs.exists == 'true'
+        run: npm run build
 
       - name: Unit and fixture tests
         if: steps.node_project.outputs.exists == 'true'

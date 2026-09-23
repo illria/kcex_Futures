@@ -1,0 +1,392 @@
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { readFile, stat } from "node:fs/promises";
+import { extname, resolve, sep } from "node:path";
+import { WebSocket, WebSocketServer } from "ws";
+import { z } from "zod";
+import { createFakeDashboardSnapshot } from "../../../../packages/shared/src/fake-snapshot.js";
+import {
+  parseDashboardEvent,
+  type AuthState,
+  type DashboardEvent,
+} from "../../../../packages/shared/src/protocol.js";
+import { AuthService } from "../auth/auth-service.js";
+import { EventBus } from "../realtime/event-bus.js";
+import { EncryptedCredentialVault, VaultLockedError, VaultUnlockError } from "../vault/encrypted-vault.js";
+
+const UnlockInputSchema = z.object({ masterKey: z.string().min(1).max(4096) }).strict();
+const CredentialsInputSchema = z
+  .object({ account: z.string().trim().min(1).max(320), password: z.string().min(1).max(4096), save: z.boolean() })
+  .strict();
+const OtpInputSchema = z.object({ code: z.string().regex(/^\d{6}$/) }).strict();
+const MAX_BODY_BYTES = 16 * 1024;
+
+export interface DashboardServerOptions {
+  auth: AuthService;
+  vault: EncryptedCredentialVault;
+  events: EventBus;
+  staticRoot?: string;
+  startedAt?: number;
+}
+
+class HttpError extends Error {
+  constructor(readonly status: number, readonly publicMessage: string) {
+    super(publicMessage);
+  }
+}
+
+function sendJson(response: ServerResponse, status: number, body: unknown): void {
+  response.writeHead(status, {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store",
+    "x-content-type-options": "nosniff",
+    "referrer-policy": "no-referrer",
+    "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
+  });
+  response.end(JSON.stringify(body));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function readJson(request: IncomingMessage): Promise<Record<string, unknown>> {
+  const contentType = request.headers["content-type"]?.split(";")[0]?.trim().toLowerCase();
+  if (contentType !== "application/json") throw new HttpError(415, "Expected application/json.");
+
+  const chunks: Buffer[] = [];
+  let size = 0;
+  try {
+    for await (const chunk of request) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += buffer.length;
+      if (size > MAX_BODY_BYTES) throw new HttpError(413, "Request body is too large.");
+      chunks.push(buffer);
+    }
+
+    const body = Buffer.concat(chunks);
+    let serialized = "";
+    let value: unknown;
+    try {
+      serialized = body.toString("utf8");
+      value = JSON.parse(serialized);
+    } catch {
+      throw new HttpError(400, "Invalid JSON request.");
+    } finally {
+      serialized = "";
+      body.fill(0);
+    }
+    if (!isRecord(value)) {
+      clearStringFields(value);
+      throw new HttpError(400, "Expected a JSON object.");
+    }
+    return value;
+  } finally {
+    for (const chunk of chunks) chunk.fill(0);
+  }
+}
+
+function clearStringFields(value: unknown): void {
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      const entry: unknown = value[index];
+      if (typeof entry === "string") value[index] = "";
+      else clearStringFields(entry);
+    }
+    return;
+  }
+  if (isRecord(value)) {
+    for (const [key, entry] of Object.entries(value)) {
+      if (typeof entry === "string") value[key] = "";
+      else clearStringFields(entry);
+    }
+  }
+}
+
+function requireLoopbackHost(request: IncomingMessage): void {
+  const rawHost = request.headers.host;
+  if (!rawHost) throw new HttpError(403, "Local dashboard host is required.");
+  try {
+    const hostUrl = new URL(`http://${rawHost}`);
+    if (hostUrl.username || hostUrl.password || hostUrl.pathname !== "/" || hostUrl.search || hostUrl.hash) {
+      throw new HttpError(403, "Only loopback dashboard hosts are allowed.");
+    }
+    const hostname = hostUrl.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+    if (hostname !== "127.0.0.1" && hostname !== "localhost" && hostname !== "::1") {
+      throw new HttpError(403, "Only loopback dashboard hosts are allowed.");
+    }
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    throw new HttpError(403, "Only loopback dashboard hosts are allowed.");
+  }
+}
+
+function requireSameOrigin(request: IncomingMessage): void {
+  const rawOrigin = request.headers.origin;
+  if (!rawOrigin) return;
+  const host = request.headers.host;
+  if (!host) throw new HttpError(403, "Request origin is not allowed.");
+  try {
+    const origin = new URL(rawOrigin);
+    if ((origin.protocol !== "http:" && origin.protocol !== "https:") || origin.host !== host) {
+      throw new HttpError(403, "Request origin is not allowed.");
+    }
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    throw new HttpError(403, "Request origin is not allowed.");
+  }
+}
+
+function getStateOrThrow(auth: AuthService): AuthState {
+  const state = auth.getState();
+  if (state.status === "APP_LOCKED") throw new HttpError(423, "Unlock the local vault first.");
+  return state;
+}
+
+async function handleApiRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  auth: AuthService,
+  vault: EncryptedCredentialVault,
+): Promise<boolean> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "127.0.0.1"}`);
+  const method = request.method ?? "GET";
+
+  if (!url.pathname.startsWith("/api/")) return false;
+  requireLoopbackHost(request);
+  requireSameOrigin(request);
+
+  if (method === "GET" && url.pathname === "/api/v1/auth/state") {
+    sendJson(response, 200, auth.getState());
+    return true;
+  }
+
+  if (method === "POST" && url.pathname === "/api/v1/vault/unlock") {
+    const raw = await readJson(request);
+    let input: z.infer<typeof UnlockInputSchema> | null = null;
+    try {
+      input = UnlockInputSchema.parse(raw);
+      const state = await auth.unlock(input.masterKey);
+      sendJson(response, 200, state);
+    } finally {
+      clearStringFields(raw);
+      if (input) input.masterKey = "";
+    }
+    return true;
+  }
+
+  if (method === "POST" && url.pathname === "/api/v1/vault/credentials") {
+    const raw = await readJson(request);
+    let input: z.infer<typeof CredentialsInputSchema> | null = null;
+    try {
+      if (!vault.isUnlocked) throw new HttpError(423, "Unlock the local vault first.");
+      input = CredentialsInputSchema.parse(raw);
+      const result = await auth.saveCredentials(input.account, input.password, input.save);
+      sendJson(response, 200, { ok: true, credentialsSaved: result.credentialsSaved });
+    } finally {
+      clearStringFields(raw);
+      if (input) {
+        input.account = "";
+        input.password = "";
+      }
+    }
+    return true;
+  }
+
+  if (method === "DELETE" && url.pathname === "/api/v1/vault/credentials") {
+    if (!vault.isUnlocked) throw new HttpError(423, "Unlock the local vault first.");
+    const result = await auth.deleteCredentials();
+    sendJson(response, 200, { ok: true, credentialsSaved: result.credentialsSaved });
+    return true;
+  }
+
+  if (method === "GET" && url.pathname === "/api/v1/dashboard/snapshot") {
+    const state = auth.getState();
+    const snapshot = createFakeDashboardSnapshot(state.status === "AUTHENTICATED");
+    sendJson(response, 200, snapshot);
+    return true;
+  }
+
+  if (method === "POST" && url.pathname === "/api/v1/auth/login") {
+    const raw = await readJson(request);
+    try {
+      z.object({}).strict().parse(raw);
+      getStateOrThrow(auth);
+      sendJson(response, 200, await auth.login());
+    } finally {
+      clearStringFields(raw);
+    }
+    return true;
+  }
+
+  if (method === "POST" && url.pathname === "/api/v1/auth/otp") {
+    const raw = await readJson(request);
+    let codeBuffer: Buffer | null = null;
+    let input: z.infer<typeof OtpInputSchema> | null = null;
+    try {
+      getStateOrThrow(auth);
+      input = OtpInputSchema.parse(raw);
+      codeBuffer = Buffer.from(input.code, "utf8");
+      input.code = "";
+      sendJson(response, 200, await auth.submitOtp(codeBuffer));
+    } finally {
+      clearStringFields(raw);
+      if (input) input.code = "";
+      codeBuffer?.fill(0);
+    }
+    return true;
+  }
+
+  sendJson(response, 404, { error: "Not found." });
+  return true;
+}
+
+const MIME_TYPES: Record<string, string> = {
+  ".css": "text/css; charset=utf-8",
+  ".html": "text/html; charset=utf-8",
+  ".ico": "image/x-icon",
+  ".js": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".webp": "image/webp",
+};
+
+async function serveStatic(
+  request: IncomingMessage,
+  response: ServerResponse,
+  staticRoot: string | undefined,
+): Promise<boolean> {
+  if (!staticRoot || request.method !== "GET") return false;
+  const pathname = new URL(request.url ?? "/", `http://${request.headers.host ?? "127.0.0.1"}`).pathname;
+  const root = resolve(staticRoot);
+  const requested = pathname === "/" ? "index.html" : decodeURIComponent(pathname).replace(/^\/+/, "");
+  let filePath = resolve(root, requested);
+  if (filePath !== root && !filePath.startsWith(root + sep)) {
+    response.writeHead(403).end();
+    return true;
+  }
+
+  try {
+    if ((await stat(filePath)).isDirectory()) filePath = resolve(filePath, "index.html");
+    const content = await readFile(filePath);
+    response.writeHead(200, {
+      "content-type": MIME_TYPES[extname(filePath)] ?? "application/octet-stream",
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+      "referrer-policy": "no-referrer",
+      "content-security-policy": "default-src 'self'; connect-src 'self' ws://127.0.0.1:6666; frame-ancestors 'none'",
+    });
+    response.end(content);
+    return true;
+  } catch {
+    if (!extname(pathname)) {
+      const indexPath = resolve(root, "index.html");
+      const html = await readFile(indexPath).catch(() => null);
+      if (html) {
+        response.writeHead(200, { "content-type": MIME_TYPES[".html"], "cache-control": "no-store" });
+        response.end(html);
+        return true;
+      }
+    }
+    response.writeHead(404).end();
+    return true;
+  }
+}
+
+function initialEvents(authState: AuthState, startedAt: number): DashboardEvent[] {
+  const now = new Date().toISOString();
+  const snapshot = createFakeDashboardSnapshot(authState.status === "AUTHENTICATED", now);
+  const proposed: unknown[] = [
+    { version: 1, type: "auth.state", timestamp: now, payload: authState },
+    { version: 1, type: "market.snapshot", timestamp: now, payload: snapshot.market },
+    {
+      version: 1,
+      type: "account.balance",
+      timestamp: now,
+      payload: { asset: "USDT", available: snapshot.account.availableUsdt, source: "MOCK" },
+    },
+    { version: 1, type: "position.changed", timestamp: now, payload: snapshot.position },
+    { version: 1, type: "scheduler.plan", timestamp: now, payload: snapshot.scheduler },
+    { version: 1, type: "system.log", timestamp: now, payload: snapshot.logs[0] },
+    {
+      version: 1,
+      type: "system.heartbeat",
+      timestamp: now,
+      payload: { status: "OK", liveTrading: false, uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000) },
+    },
+  ];
+  return proposed.map(parseDashboardEvent);
+}
+
+export function createDashboardServer(options: DashboardServerOptions): Server {
+  const startedAt = options.startedAt ?? Date.now();
+  const webSockets = new WebSocketServer({ noServer: true, maxPayload: 8 * 1024, perMessageDeflate: false });
+  const server = createServer((request, response) => {
+    void (async () => {
+      try {
+        const handled = await handleApiRequest(request, response, options.auth, options.vault);
+        if (!handled) await serveStatic(request, response, options.staticRoot);
+        if (!handled && !response.writableEnded) sendJson(response, 404, { error: "Not found." });
+      } catch (error) {
+        if (response.headersSent || response.writableEnded) return;
+        if (error instanceof HttpError) {
+          sendJson(response, error.status, { error: error.publicMessage });
+        } else if (error instanceof VaultUnlockError) {
+          sendJson(response, 401, { error: "Unable to unlock the credential vault." });
+        } else if (error instanceof VaultLockedError) {
+          sendJson(response, 423, { error: "Unlock the local vault first." });
+        } else {
+          sendJson(response, 500, { error: "The local request could not be completed." });
+        }
+      }
+    })();
+  });
+
+  server.on("upgrade", (request, socket, head) => {
+    try {
+      requireLoopbackHost(request);
+      requireSameOrigin(request);
+      const pathname = new URL(request.url ?? "/", `http://${request.headers.host ?? "127.0.0.1"}`).pathname;
+      if (pathname !== "/api/v1/events") throw new HttpError(404, "Not found.");
+      webSockets.handleUpgrade(request, socket, head, (webSocket) => {
+        webSockets.emit("connection", webSocket, request);
+      });
+    } catch {
+      socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+      socket.destroy();
+    }
+  });
+
+  webSockets.on("connection", (webSocket: WebSocket) => {
+    const unsubscribe = options.events.subscribe((event) => {
+      if (webSocket.readyState === WebSocket.OPEN) webSocket.send(JSON.stringify(event));
+    });
+    for (const event of initialEvents(options.auth.getState(), startedAt)) {
+      webSocket.send(JSON.stringify(event));
+    }
+    webSocket.on("message", () => webSocket.close(1008, "Read-only event stream."));
+    webSocket.on("close", unsubscribe);
+    webSocket.on("error", unsubscribe);
+  });
+
+  server.on("close", () => {
+    for (const webSocket of webSockets.clients) webSocket.close(1001, "Local dashboard is shutting down.");
+    webSockets.close();
+  });
+  return server;
+}
+
+export function getDashboardBindAddress(): "127.0.0.1" {
+  return "127.0.0.1";
+}
+
+export function getDashboardPort(environment: NodeJS.ProcessEnv = process.env): number {
+  const configured = environment.DASHBOARD_PORT?.trim();
+  if (!configured) return 6666;
+  const port = Number(configured);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("DASHBOARD_PORT must be a valid TCP port.");
+  return port;
+}
+
+export function resolveStaticRoot(root = resolve(process.cwd(), "dist/web")): string {
+  return root;
+}
