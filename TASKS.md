@@ -10,11 +10,9 @@ Spec: [docs/tasks/TASK-001.md](docs/tasks/TASK-001.md)
 
 Do not work on real order submission yet.
 
-## Current
-
 ### TASK-002 — Local Dashboard + Encrypted Credential Vault
 
-Status: IN PROGRESS
+Status: COMPLETE
 
 Spec: [docs/tasks/TASK-002.md](docs/tasks/TASK-002.md)
 
