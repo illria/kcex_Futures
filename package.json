@@ -1,0 +1,30 @@
+{
+  "name": "kcex-futures-readonly-bootstrap",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "start": "node dist/src/index.js",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "browser:install": "playwright install chromium"
+  },
+  "dependencies": {
+    "dotenv": "18.0.2",
+    "pino": "10.3.1",
+    "playwright": "1.63.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.3",
+    "happy-dom": "20.14.5",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2",
+    "vitest": "5.0.1"
+  }
+}

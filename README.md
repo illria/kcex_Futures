@@ -157,6 +157,12 @@ TP / SL
 
 任何阶段未验收，不进入下一阶段。
 
+## TASK-001 当前状态与安全注记
+
+TASK-001 提供只读浏览器启动与页面状态识别 scaffold。真实登录、持久化会话复用和 KCEX 实际 GPS_USDT DOM 验证均为 **DEFERRED MANUAL VERIFICATION**。Persistent Browser 当前仅为 TASK-001 scaffold；TASK-003 将依据 [docs/FRONTEND_AUTH.md](docs/FRONTEND_AUTH.md)，优先采用加密的 Playwright storage state。
+
+在 TASK-003 实现账号密码自动填入之前，必须先将 `KCEX_BASE_URL` 限制为已确认的 KCEX 官方域名；绝不能向任意自定义 host 自动填入凭据。当前 TASK-001 不实现凭据填写。
+
 ## 推荐技术栈
 
 - Node.js 22+

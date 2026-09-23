@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - "codex/**"
       - "feat/**"
       - "fix/**"
       - "task/**"
@@ -17,10 +18,12 @@ jobs:
     name: Typecheck and Tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      LIVE_TRADING: "false"
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Detect Node project
         id: node_project
@@ -35,9 +38,10 @@ jobs:
 
       - name: Setup Node.js 22
         if: steps.node_project.outputs.exists == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
+          package-manager-cache: false
 
       - name: Require lockfile
         if: steps.node_project.outputs.exists == 'true'
