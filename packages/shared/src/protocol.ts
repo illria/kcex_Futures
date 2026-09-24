@@ -2,14 +2,22 @@ import { z } from "zod";
 
 export const MASTER_KEY_MIN_LENGTH = 12;
 
+export const AuthProviderSchema = z.enum(["FAKE", "KCEX"]);
+export type AuthProvider = z.infer<typeof AuthProviderSchema>;
+
 export const AuthStatusSchema = z.enum([
   "APP_LOCKED",
   "VAULT_UNLOCKED",
   "CREDENTIALS_REQUIRED",
+  "SESSION_CHECK",
   "LOGGING_IN",
   "OTP_REQUIRED",
+  "SUBMITTING_OTP",
   "AUTHENTICATED",
   "AUTH_FAILED",
+  "AUTH_UNKNOWN",
+  "MANUAL_CHALLENGE",
+  "SESSION_LOST",
 ]);
 
 export type AuthStatus = z.infer<typeof AuthStatusSchema>;
@@ -17,9 +25,9 @@ export type AuthStatus = z.infer<typeof AuthStatusSchema>;
 export const AuthStateSchema = z
   .object({
     status: AuthStatusSchema,
+    authProvider: AuthProviderSchema,
     credentialsSaved: z.boolean(),
     liveTrading: z.literal(false),
-    fakeAuth: z.literal(true),
     updatedAt: z.string().min(1),
   })
   .strict();

@@ -1,8 +1,17 @@
 import type { Logger } from "pino";
-import { AuthStateSchema, type AuthState, type AuthStatus } from "../../../../packages/shared/src/protocol.js";
+import {
+  AuthStateSchema,
+  type AuthState,
+  type AuthStatus,
+} from "../../../../packages/shared/src/protocol.js";
 import { EventBus } from "../realtime/event-bus.js";
+import { EncryptedSessionStore } from "../session/encrypted-session-store.js";
 import { FakeAuthAdapter } from "./fake-auth-adapter.js";
-import { EncryptedCredentialVault, VaultCredentialsRequiredError } from "../vault/encrypted-vault.js";
+import type { AuthAdapter, AuthAdapterResult } from "./auth-adapter.js";
+import {
+  EncryptedCredentialVault,
+  VaultCredentialsRequiredError,
+} from "../vault/encrypted-vault.js";
 
 interface PendingOtp {
   expiresAt: number;
@@ -19,9 +28,10 @@ export class AuthService {
     private readonly vault: EncryptedCredentialVault,
     private readonly events: EventBus,
     private readonly logger: Logger,
-    private readonly adapter = new FakeAuthAdapter(),
+    private readonly adapter: AuthAdapter = new FakeAuthAdapter(),
     private readonly otpTtlMs = 120_000,
     private readonly now: () => number = Date.now,
+    private readonly sessionStore?: EncryptedSessionStore,
   ) {}
 
   getState(): AuthState {
@@ -34,8 +44,35 @@ export class AuthService {
     this.vault.lock();
     this.credentialsSaved = false;
     if (this.status !== "APP_LOCKED") this.transition("APP_LOCKED");
+
     const result = await this.vault.unlock(masterKey);
     this.credentialsSaved = result.credentialsSaved;
+
+    if (this.sessionStore && await this.sessionStore.hasSession()) {
+      this.transition("SESSION_CHECK");
+      const restored = await this.restoreEncryptedSession();
+      if (restored === "AUTHENTICATED") {
+        this.clearPendingOtp();
+        this.transition("AUTHENTICATED");
+        return this.snapshot();
+      }
+      if (restored === "OTP_REQUIRED") {
+        this.establishPendingOtp();
+        this.transition("OTP_REQUIRED");
+        return this.snapshot();
+      }
+      if (restored === "MANUAL_CHALLENGE" || restored === "AUTH_UNKNOWN") {
+        this.clearPendingOtp();
+        this.transition(restored);
+        return this.snapshot();
+      }
+
+      // A conclusively lost or failed session is the only restore outcome that
+      // falls back to credentials. The encrypted session is removed first so
+      // the next unlock cannot retry the same stale state.
+      await this.sessionStore.clear().catch(() => undefined);
+    }
+
     this.transition(result.credentialsSaved ? "VAULT_UNLOCKED" : "CREDENTIALS_REQUIRED");
     return this.snapshot();
   }
@@ -55,6 +92,7 @@ export class AuthService {
     const result = await this.vault.deleteCredentials();
     this.credentialsSaved = false;
     this.clearPendingOtp();
+    await this.sessionStore?.clear();
     this.transition("CREDENTIALS_REQUIRED");
     return result;
   }
@@ -68,9 +106,9 @@ export class AuthService {
 
     this.clearPendingOtp();
     this.transition("LOGGING_IN");
-    let result: Awaited<ReturnType<FakeAuthAdapter["login"]>>;
+    let result: AuthAdapterResult;
     try {
-      result = await this.vault.withDecryptedCredentials(({ account }) => this.adapter.login(account));
+      result = await this.vault.withDecryptedCredentials((credentials) => this.adapter.login(credentials));
     } catch (error) {
       if (error instanceof VaultCredentialsRequiredError) {
         this.transition("CREDENTIALS_REQUIRED");
@@ -79,18 +117,7 @@ export class AuthService {
       this.transition("AUTH_FAILED");
       return this.snapshot();
     }
-    if (result === "AUTH_FAILED") {
-      this.transition("AUTH_FAILED");
-      return this.snapshot();
-    }
-
-    const expiresAt = this.now() + this.otpTtlMs;
-    const timer = setTimeout(() => {
-      if (this.pendingOtp?.expiresAt === expiresAt) this.expireOtp();
-    }, this.otpTtlMs);
-    timer.unref();
-    this.pendingOtp = { expiresAt, timer };
-    this.transition("OTP_REQUIRED");
+    await this.applyAdapterResult(result);
     return this.snapshot();
   }
 
@@ -104,13 +131,23 @@ export class AuthService {
     }
 
     this.clearPendingOtp();
+    this.transition("SUBMITTING_OTP");
     try {
-      const accepted = await this.adapter.verifyOtp(candidate);
-      this.transition(accepted ? "AUTHENTICATED" : "AUTH_FAILED");
+      await this.applyAdapterResult(await this.adapter.submitOtp(candidate));
+      return this.snapshot();
+    } catch {
+      this.transition("AUTH_FAILED");
       return this.snapshot();
     } finally {
       candidate.fill(0);
     }
+  }
+
+  async checkSession(): Promise<AuthState> {
+    this.clearPendingOtp();
+    this.transition("SESSION_CHECK");
+    await this.applyAdapterResult(await this.adapter.checkSession());
+    return this.snapshot();
   }
 
   close(): void {
@@ -118,6 +155,50 @@ export class AuthService {
     this.vault.lock();
     this.credentialsSaved = false;
     this.status = "APP_LOCKED";
+    void Promise.resolve(this.adapter.close?.()).catch(() => undefined);
+  }
+
+  private async restoreEncryptedSession(): Promise<AuthAdapterResult> {
+    if (!this.sessionStore) return "SESSION_LOST";
+    try {
+      return await this.sessionStore.withStorageState(async (storageState) => {
+        if (this.adapter.restoreSession) return this.adapter.restoreSession(storageState);
+        return this.adapter.checkSession();
+      });
+    } catch {
+      return "AUTH_UNKNOWN";
+    }
+  }
+
+  private async applyAdapterResult(result: AuthAdapterResult): Promise<void> {
+    if (result === "OTP_REQUIRED") {
+      this.establishPendingOtp();
+      this.transition("OTP_REQUIRED");
+      return;
+    }
+
+    this.clearPendingOtp();
+    this.transition(result);
+    if (result === "AUTHENTICATED") await this.persistSessionIfAvailable();
+  }
+
+  private establishPendingOtp(): void {
+    this.clearPendingOtp();
+    const expiresAt = this.now() + this.otpTtlMs;
+    const timer = setTimeout(() => {
+      if (this.pendingOtp?.expiresAt === expiresAt) this.expireOtp();
+    }, this.otpTtlMs);
+    timer.unref();
+    this.pendingOtp = { expiresAt, timer };
+  }
+
+  private async persistSessionIfAvailable(): Promise<void> {
+    if (!this.sessionStore || !this.vault.credentialsSaved || !this.adapter.exportSession) return;
+    try {
+      await this.sessionStore.save(await this.adapter.exportSession());
+    } catch {
+      this.logger.warn({ authProvider: this.adapter.provider }, "Authenticated session could not be persisted.");
+    }
   }
 
   private expireOtpIfNeeded(): void {
@@ -144,15 +225,18 @@ export class AuthService {
       timestamp: this.updatedAt,
       payload: state,
     });
-    this.logger.info({ authStatus: status, credentialsSaved: this.credentialsSaved }, "Authentication state changed.");
+    this.logger.info(
+      { authStatus: status, authProvider: this.adapter.provider, credentialsSaved: this.credentialsSaved },
+      "Authentication state changed.",
+    );
   }
 
   private snapshot(): AuthState {
     return AuthStateSchema.parse({
       status: this.status,
+      authProvider: this.adapter.provider,
       credentialsSaved: this.credentialsSaved,
       liveTrading: false,
-      fakeAuth: true,
       updatedAt: this.updatedAt,
     });
   }

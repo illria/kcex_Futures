@@ -85,6 +85,14 @@ describe("local credential and fake auth API", () => {
     expect(JSON.parse(otpText)).toMatchObject({ status: "AUTHENTICATED", liveTrading: false });
     expect(otpText).not.toContain(FAKE_OTP_CODE);
 
+    const sessionCheck = await fetch(`${baseUrl}/api/v1/auth/session/check`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(sessionCheck.status).toBe(200);
+    expect(await sessionCheck.json()).toMatchObject({ status: "SESSION_LOST", liveTrading: false });
+
     const persisted = await readFile(fixture.filePath, "utf8");
     expect(persisted).not.toContain(TEST_MASTER_KEY);
     expect(persisted).not.toContain(TEST_ACCOUNT);

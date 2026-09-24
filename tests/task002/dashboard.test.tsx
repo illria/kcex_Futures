@@ -19,7 +19,7 @@ describe("mock dashboard rendering", () => {
       status: "AUTHENTICATED",
       credentialsSaved: false,
       liveTrading: false,
-      fakeAuth: true,
+      authProvider: "FAKE",
       updatedAt: new Date(0).toISOString(),
     });
     const html = renderToStaticMarkup(React.createElement(DashboardView, {
@@ -55,7 +55,7 @@ describe("saved credential deletion UI", () => {
     status: "CREDENTIALS_REQUIRED",
     credentialsSaved: true,
     liveTrading: false,
-    fakeAuth: true,
+    authProvider: "FAKE",
     updatedAt: new Date(0).toISOString(),
   });
 

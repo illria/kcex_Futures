@@ -31,6 +31,7 @@ describe("Task 002 fake auth and OTP lifecycle", () => {
       "VAULT_UNLOCKED",
       "LOGGING_IN",
       "OTP_REQUIRED",
+      "SUBMITTING_OTP",
       "AUTHENTICATED",
     ]);
     await expect(readFile(fixture.filePath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
@@ -59,7 +60,7 @@ describe("Task 002 fake auth and OTP lifecycle", () => {
     await fixture.auth.saveCredentials("fail@example.test", TEST_PASSWORD, false);
 
     expect((await fixture.auth.login()).status).toBe("AUTH_FAILED");
-    expect(fixture.auth.getState().fakeAuth).toBe(true);
+    expect(fixture.auth.getState().authProvider).toBe("FAKE");
     expect(fixture.auth.getState().liveTrading).toBe(false);
   });
 });

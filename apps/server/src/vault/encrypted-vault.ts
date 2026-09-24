@@ -13,6 +13,7 @@ const IV_LENGTH = 12;
 const TAG_LENGTH = 16;
 const SCRYPT_MAXMEM = 64 * 1024 * 1024;
 const VAULT_AAD = Buffer.from("kcex-futures-vault:v1", "utf8");
+const SESSION_AAD = Buffer.from("kcex-futures-session:v1", "utf8");
 
 const CredentialSchema = z
   .object({ account: z.string().trim().min(1).max(320), password: z.string().min(1).max(4096) })
@@ -30,10 +31,22 @@ const EnvelopeSchema = z
   })
   .strict();
 
+const SessionEnvelopeSchema = z
+  .object({
+    version: z.literal(1),
+    purpose: z.literal("session"),
+    iv: z.string().regex(/^[A-Za-z0-9+/]+={0,2}$/),
+    tag: z.string().regex(/^[A-Za-z0-9+/]+={0,2}$/),
+    ciphertext: z.string().regex(/^[A-Za-z0-9+/]+={0,2}$/),
+  })
+  .strict();
+
 type Credential = z.infer<typeof CredentialSchema>;
 export type TemporaryVaultCredentials = Readonly<Credential>;
 export type EncryptedVaultEnvelope = z.infer<typeof EnvelopeSchema>;
+export type EncryptedSessionEnvelope = z.infer<typeof SessionEnvelopeSchema>;
 type CredentialOperation<T> = (credentials: TemporaryVaultCredentials) => T | Promise<T>;
+type SensitivePayloadOperation<T> = (payload: Buffer) => T | Promise<T>;
 
 export class VaultUnlockError extends Error {
   constructor() {
@@ -78,6 +91,16 @@ function assertEnvelopeLengths(envelope: EncryptedVaultEnvelope): void {
     Buffer.from(envelope.ciphertext, "base64").length === 0
   ) {
     throw new Error("Invalid vault envelope.");
+  }
+}
+
+function assertSessionEnvelopeLengths(envelope: EncryptedSessionEnvelope): void {
+  if (
+    Buffer.from(envelope.iv, "base64").length !== IV_LENGTH ||
+    Buffer.from(envelope.tag, "base64").length !== TAG_LENGTH ||
+    Buffer.from(envelope.ciphertext, "base64").length === 0
+  ) {
+    throw new Error("Invalid encrypted session envelope.");
   }
 }
 
@@ -284,6 +307,72 @@ export class EncryptedCredentialVault {
       throw new VaultUnlockError();
     }
     return withDecryptedEnvelope(key, envelope, operation, this.activeCredentials);
+  }
+
+  /**
+   * Seal a short-lived Playwright storage-state payload with the key held by
+   * the unlocked vault. The derived key never leaves this class.
+   */
+  async sealSession(payload: Buffer): Promise<EncryptedSessionEnvelope> {
+    if (!this.key) throw new VaultLockedError();
+    const iv = randomBytes(IV_LENGTH);
+    const cipher = createCipheriv("aes-256-gcm", this.key, iv);
+    cipher.setAAD(SESSION_AAD);
+    let ciphertext: Buffer | null = null;
+    try {
+      ciphertext = Buffer.concat([cipher.update(payload), cipher.final()]);
+      return {
+        version: 1,
+        purpose: "session",
+        iv: iv.toString("base64"),
+        tag: cipher.getAuthTag().toString("base64"),
+        ciphertext: ciphertext.toString("base64"),
+      };
+    } finally {
+      ciphertext?.fill(0);
+      iv.fill(0);
+    }
+  }
+
+  async withDecryptedSession<T>(
+    envelope: EncryptedSessionEnvelope,
+    operation: SensitivePayloadOperation<T>,
+  ): Promise<T> {
+    if (!this.key) throw new VaultLockedError();
+    let iv: Buffer | null = null;
+    let tag: Buffer | null = null;
+    let ciphertext: Buffer | null = null;
+    let plaintextChunk: Buffer | null = null;
+    let finalChunk: Buffer | null = null;
+    let plaintext: Buffer | null = null;
+    try {
+      const parsed = SessionEnvelopeSchema.parse(envelope);
+      assertSessionEnvelopeLengths(parsed);
+      iv = Buffer.from(parsed.iv, "base64");
+      tag = Buffer.from(parsed.tag, "base64");
+      ciphertext = Buffer.from(parsed.ciphertext, "base64");
+      const decipher = createDecipheriv("aes-256-gcm", this.key, iv);
+      decipher.setAAD(SESSION_AAD);
+      decipher.setAuthTag(tag);
+      plaintextChunk = decipher.update(ciphertext);
+      finalChunk = decipher.final();
+      plaintext = Buffer.concat([plaintextChunk, finalChunk]);
+    } catch (error) {
+      if (error instanceof VaultLockedError) throw error;
+      throw new VaultUnlockError();
+    }
+
+    try {
+      if (!plaintext) throw new VaultUnlockError();
+      return await operation(plaintext);
+    } finally {
+      iv?.fill(0);
+      tag?.fill(0);
+      ciphertext?.fill(0);
+      plaintextChunk?.fill(0);
+      finalChunk?.fill(0);
+      plaintext?.fill(0);
+    }
   }
 
   lock(): void {

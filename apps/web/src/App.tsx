@@ -59,7 +59,10 @@ export function DashboardView({
   return (
     <main className="dashboard">
       <section className="status-grid" aria-label="Runtime status">
-        <StatusTile label="KCEX" value={auth.status === "AUTHENTICATED" ? "Fake Authenticated" : "Login Required"} />
+        <StatusTile
+          label="KCEX"
+          value={auth.status === "AUTHENTICATED" ? `${auth.authProvider} Authenticated` : auth.status}
+        />
         <StatusTile label="Browser" value={snapshot.status.browser} />
         <StatusTile label="Mode" value={snapshot.status.mode} />
         <StatusTile label="Trading" value={snapshot.status.trading} />
@@ -67,7 +70,7 @@ export function DashboardView({
       </section>
 
       <div className="stream-state" role="status">
-        WebSocket: {webSocketConnected ? "CONNECTED" : "DISCONNECTED"} · Fake fixture data only
+        WebSocket: {webSocketConnected ? "CONNECTED" : "DISCONNECTED"} · Fixture data only · Provider: {auth.authProvider}
       </div>
 
       <section className="panel market-panel">
@@ -134,7 +137,7 @@ export function DashboardView({
         </ul>
       </section>
 
-      <p className="safety-note">Fake Auth only · LIVE_TRADING=false · No real KCEX login, browser session, order submission, or live trading.</p>
+      <p className="safety-note">Authentication is separate from trading · LIVE_TRADING=false · No order submission or live trading.</p>
     </main>
   );
 }
@@ -222,7 +225,7 @@ export function AuthPanel({
       const state = await requestJson<unknown>("/api/v1/auth/login", { method: "POST", body: "{}" });
       onAuthChanged(AuthStateSchema.parse(state));
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Fake login failed.");
+      setMessage(error instanceof Error ? error.message : "Authentication failed.");
     } finally {
       submittedPassword = "";
       setBusy(false);
@@ -242,9 +245,26 @@ export function AuthPanel({
       });
       onAuthChanged(AuthStateSchema.parse(state));
     } catch {
-      setMessage("The fake verification code expired or was not accepted.");
+      setMessage("The verification code expired or was not accepted.");
     } finally {
       submittedCode = "";
+      setBusy(false);
+    }
+  }
+
+  async function checkSession() {
+    if (busy) return;
+    setMessage("");
+    setBusy(true);
+    try {
+      const state = await requestJson<unknown>("/api/v1/auth/session/check", {
+        method: "POST",
+        body: "{}",
+      });
+      onAuthChanged(AuthStateSchema.parse(state));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Session check failed.");
+    } finally {
       setBusy(false);
     }
   }
@@ -311,7 +331,7 @@ export function AuthPanel({
     return (
       <main className="auth-shell">
         <section className="auth-card">
-          <p className="eyebrow">Fake Auth · no KCEX connection</p>
+          <p className="eyebrow">{auth.authProvider === "FAKE" ? "Fake Auth · fixture only" : "KCEX authentication"}</p>
           <h1>KCEX Email Verification</h1>
           <form onSubmit={submitOtp}>
             <label htmlFor="verification-code">Verification Code</label>
@@ -328,7 +348,56 @@ export function AuthPanel({
             />
             <button type="submit" disabled={busy || verificationCode.length !== 6}>{busy ? "Submitting…" : "Submit"}</button>
           </form>
-          <p className="muted-note">FakeAuth demo code: {FAKE_OTP_CODE}. It is not a real email OTP.</p>
+          {auth.authProvider === "FAKE" ? (
+            <p className="muted-note">FakeAuth demo code: {FAKE_OTP_CODE}. It is not a real email OTP.</p>
+          ) : null}
+          {message ? <p className="form-error" role="alert">{message}</p> : null}
+        </section>
+      </main>
+    );
+  }
+
+  if (auth.status === "SESSION_CHECK" || auth.status === "LOGGING_IN" || auth.status === "SUBMITTING_OTP") {
+    return (
+      <main className="auth-shell">
+        <section className="auth-card">
+          <p className="eyebrow">{auth.authProvider} authentication</p>
+          <h1>{auth.status === "SESSION_CHECK" ? "Checking saved session…" : "Signing in…"}</h1>
+          <p className="muted-note">Secrets remain in the local backend and are never shown in the dashboard.</p>
+          <p className="safety-note">LIVE_TRADING=false</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (auth.status === "MANUAL_CHALLENGE") {
+    return (
+      <main className="auth-shell">
+        <section className="auth-card">
+          <p className="eyebrow">{auth.authProvider} authentication</p>
+          <h1>Manual security check required</h1>
+          <p className="muted-note">A security challenge was detected. Complete it manually in the approved browser, then retry.</p>
+          <button type="button" onClick={() => void checkSession()} disabled={busy}>
+            {busy ? "Checking…" : "Check Again"}
+          </button>
+          <p className="safety-note">No CAPTCHA or anti-bot challenge is bypassed automatically.</p>
+          {message ? <p className="form-error" role="alert">{message}</p> : null}
+        </section>
+      </main>
+    );
+  }
+
+  if (auth.status === "AUTH_UNKNOWN") {
+    return (
+      <main className="auth-shell">
+        <section className="auth-card">
+          <p className="eyebrow">{auth.authProvider} authentication</p>
+          <h1>Authentication state is unknown</h1>
+          <p className="muted-note">The page did not provide enough trusted evidence. No credential action was continued.</p>
+          <button type="button" onClick={() => void checkSession()} disabled={busy}>
+            {busy ? "Checking…" : "Check Again"}
+          </button>
+          <p className="safety-note">The workflow fails closed. LIVE_TRADING=false</p>
           {message ? <p className="form-error" role="alert">{message}</p> : null}
         </section>
       </main>
@@ -338,9 +407,13 @@ export function AuthPanel({
   return (
     <main className="auth-shell">
       <section className="auth-card">
-        <p className="eyebrow">{auth.status === "AUTH_FAILED" ? "Fake Auth failed" : "Vault unlocked"}</p>
+        <p className="eyebrow">{auth.status === "AUTH_FAILED" ? `${auth.authProvider} authentication failed` : auth.status === "SESSION_LOST" ? "Session lost" : "Vault unlocked"}</p>
         <h1>KCEX Credentials</h1>
-        <p className="muted-note">FakeAuthAdapter only. No request is made to KCEX.</p>
+        <p className="muted-note">
+          {auth.authProvider === "FAKE"
+            ? "FakeAuthAdapter fixture only. No request is made to KCEX."
+            : "Credentials are handled by the local KCEX adapter; the browser host is checked before every fill."}
+        </p>
         {auth.credentialsSaved ? <p className="saved-state" role="status">Encrypted credentials are saved locally.</p> : null}
         <form onSubmit={login}>
           <label htmlFor="kcex-account">KCEX Account</label>
