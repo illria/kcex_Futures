@@ -1,5 +1,6 @@
 import type { AddressInfo } from "node:net";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { request as httpRequest } from "node:http";
 import WebSocket from "ws";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -15,7 +16,15 @@ describe("local credential and fake auth API", () => {
 
   beforeEach(async () => {
     fixture = await createAuthFixture();
-    server = createDashboardServer({ auth: fixture.auth, vault: fixture.vault, events: fixture.events });
+    const staticRoot = join(fixture.directory, "web");
+    await mkdir(staticRoot);
+    await writeFile(join(staticRoot, "index.html"), "<!doctype html><title>Fixture Dashboard</title>");
+    server = createDashboardServer({
+      auth: fixture.auth,
+      vault: fixture.vault,
+      events: fixture.events,
+      staticRoot,
+    });
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
       server.listen(0, "127.0.0.1", () => resolve());
@@ -97,6 +106,93 @@ describe("local credential and fake auth API", () => {
     expect(response).toBe(403);
   });
 
+  it("serves a same-origin WebSocket CSP for the default and custom dashboard ports", async () => {
+    const requestCsp = async (host: string) => new Promise<{ status: number; csp: string | undefined }>((resolve, reject) => {
+      const request = httpRequest(baseUrl, { headers: { host } }, (incoming) => {
+        incoming.resume();
+        resolve({
+          status: incoming.statusCode ?? 0,
+          csp: incoming.headers["content-security-policy"],
+        });
+      });
+      request.once("error", reject);
+      request.end();
+    });
+
+    const defaultPort = await requestCsp("127.0.0.1:6666");
+    const customPort = await requestCsp("127.0.0.1:7000");
+    expect(defaultPort.status).toBe(200);
+    expect(defaultPort.csp).toContain("connect-src 'self' ws://127.0.0.1:6666");
+    expect(customPort.status).toBe(200);
+    expect(customPort.csp).toContain("connect-src 'self' ws://127.0.0.1:7000");
+    expect(customPort.csp).not.toContain("connect-src *");
+  });
+
+  it("rejects an attacker Host header for the static dashboard too", async () => {
+    const response = await new Promise<number>((resolve, reject) => {
+      const request = httpRequest(baseUrl, { headers: { host: "attacker.example" } }, (incoming) => {
+        incoming.resume();
+        resolve(incoming.statusCode ?? 0);
+      });
+      request.once("error", reject);
+      request.end();
+    });
+    expect(response).toBe(403);
+  });
+
+  it("returns sanitized HTTP 400 responses for invalid unlock, credential, and OTP input", async () => {
+    const weakMasterKey = "12345678901";
+    const weakKeyResponse = await fetch(`${baseUrl}/api/v1/vault/unlock`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ masterKey: weakMasterKey }),
+    });
+    const weakKeyBody = await weakKeyResponse.text();
+    expect(weakKeyResponse.status).toBe(400);
+    expect(weakKeyBody).toBe(JSON.stringify({ error: "Invalid request." }));
+    expect(weakKeyBody).not.toContain(weakMasterKey);
+
+    const emptyKeyResponse = await fetch(`${baseUrl}/api/v1/vault/unlock`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ masterKey: "" }),
+    });
+    expect(emptyKeyResponse.status).toBe(400);
+
+    const minimumKeyResponse = await fetch(`${baseUrl}/api/v1/vault/unlock`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ masterKey: "123456789012" }),
+    });
+    expect(minimumKeyResponse.status).toBe(200);
+
+    await fetch(`${baseUrl}/api/v1/vault/unlock`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ masterKey: TEST_MASTER_KEY }),
+    });
+    const invalidCredentials = await fetch(`${baseUrl}/api/v1/vault/credentials`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ account: TEST_ACCOUNT, save: true }),
+    });
+    const credentialsBody = await invalidCredentials.text();
+    expect(invalidCredentials.status).toBe(400);
+    expect(credentialsBody).toBe(JSON.stringify({ error: "Invalid request." }));
+    expect(credentialsBody).not.toContain(TEST_ACCOUNT);
+    expect(credentialsBody).not.toContain("password");
+
+    const invalidOtp = await fetch(`${baseUrl}/api/v1/auth/otp`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code: "12x" }),
+    });
+    const otpBody = await invalidOtp.text();
+    expect(invalidOtp.status).toBe(400);
+    expect(otpBody).toBe(JSON.stringify({ error: "Invalid request." }));
+    expect(otpBody).not.toContain("12x");
+  });
+
   it("returns to APP_LOCKED after a failed re-unlock attempt", async () => {
     await fetch(`${baseUrl}/api/v1/vault/unlock`, {
       method: "POST",
@@ -166,8 +262,15 @@ describe("local credential and fake auth API", () => {
       body: JSON.stringify({ account: TEST_ACCOUNT, password: TEST_PASSWORD, save: true }),
     });
     const deleted = await fetch(`${baseUrl}/api/v1/vault/credentials`, { method: "DELETE" });
+    const deletionText = await deleted.text();
 
-    expect(await deleted.json()).toEqual({ ok: true, credentialsSaved: false });
+    expect(JSON.parse(deletionText)).toMatchObject({
+      ok: true,
+      credentialsSaved: false,
+      auth: { status: "CREDENTIALS_REQUIRED", credentialsSaved: false, liveTrading: false },
+    });
+    expect(deletionText).not.toContain(TEST_PASSWORD);
+    expect(deletionText).not.toContain(TEST_MASTER_KEY);
     expect(fixture.vault.hasCredentials).toBe(false);
     await expect(readFile(fixture.filePath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });

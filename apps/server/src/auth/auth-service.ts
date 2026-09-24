@@ -2,7 +2,7 @@ import type { Logger } from "pino";
 import { AuthStateSchema, type AuthState, type AuthStatus } from "../../../../packages/shared/src/protocol.js";
 import { EventBus } from "../realtime/event-bus.js";
 import { FakeAuthAdapter } from "./fake-auth-adapter.js";
-import { EncryptedCredentialVault } from "../vault/encrypted-vault.js";
+import { EncryptedCredentialVault, VaultCredentialsRequiredError } from "../vault/encrypted-vault.js";
 
 interface PendingOtp {
   expiresAt: number;
@@ -61,15 +61,24 @@ export class AuthService {
 
   async login(): Promise<AuthState> {
     if (!this.vault.isUnlocked) return this.snapshot();
-    const account = this.vault.getAccountForFakeAuth();
-    if (!account) {
+    if (!this.vault.hasCredentials) {
       this.transition("CREDENTIALS_REQUIRED");
       return this.snapshot();
     }
 
     this.clearPendingOtp();
     this.transition("LOGGING_IN");
-    const result = await this.adapter.login(account);
+    let result: Awaited<ReturnType<FakeAuthAdapter["login"]>>;
+    try {
+      result = await this.vault.withDecryptedCredentials(({ account }) => this.adapter.login(account));
+    } catch (error) {
+      if (error instanceof VaultCredentialsRequiredError) {
+        this.transition("CREDENTIALS_REQUIRED");
+        return this.snapshot();
+      }
+      this.transition("AUTH_FAILED");
+      return this.snapshot();
+    }
     if (result === "AUTH_FAILED") {
       this.transition("AUTH_FAILED");
       return this.snapshot();

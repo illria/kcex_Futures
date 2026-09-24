@@ -5,6 +5,7 @@ import { createFakeDashboardSnapshot } from "../../../packages/shared/src/fake-s
 import {
   AuthStateSchema,
   DashboardSnapshotSchema,
+  MASTER_KEY_MIN_LENGTH,
   parseDashboardEvent,
   type AuthState,
   type DashboardEvent,
@@ -157,7 +158,7 @@ function Metric({ label, value, suffix }: { label: string; value: string; suffix
   );
 }
 
-function AuthPanel({
+export function AuthPanel({
   auth,
   onAuthChanged,
 }: {
@@ -171,6 +172,10 @@ function AuthPanel({
   const [verificationCode, setVerificationCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    setSaveCredentials(auth.credentialsSaved);
+  }, [auth.credentialsSaved]);
 
   async function unlock(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -244,6 +249,34 @@ function AuthPanel({
     }
   }
 
+  async function deleteSavedCredentials() {
+    if (!auth.credentialsSaved || busy) return;
+    if (!window.confirm("Delete the saved encrypted credentials from this device?")) return;
+
+    setMessage("");
+    setBusy(true);
+    try {
+      const result = await requestJson<{
+        ok: true;
+        credentialsSaved: false;
+        auth: unknown;
+      }>("/api/v1/vault/credentials", { method: "DELETE" });
+      if (!result.ok || result.credentialsSaved !== false) {
+        throw new Error("Invalid delete response.");
+      }
+
+      setAccount("");
+      setPassword("");
+      setVerificationCode("");
+      setSaveCredentials(false);
+      onAuthChanged(AuthStateSchema.parse(result.auth));
+    } catch {
+      setMessage("Saved credentials could not be deleted.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (auth.status === "APP_LOCKED") {
     return (
       <main className="auth-shell">
@@ -260,8 +293,11 @@ function AuthPanel({
               value={masterKey}
               onChange={(event) => setMasterKey(event.currentTarget.value)}
               placeholder="••••••••••••"
+              minLength={MASTER_KEY_MIN_LENGTH}
+              maxLength={4096}
               required
             />
+            <small>Minimum {MASTER_KEY_MIN_LENGTH} characters</small>
             <button type="submit" disabled={busy}>{busy ? "Unlocking…" : "Unlock"}</button>
           </form>
           <p className="safety-note">Bound to 127.0.0.1 · LIVE_TRADING=false</p>
@@ -336,6 +372,11 @@ function AuthPanel({
           </label>
           <button type="submit" disabled={busy}>{busy ? "Signing in…" : "Login"}</button>
         </form>
+        {auth.credentialsSaved ? (
+          <button type="button" className="secondary" onClick={() => void deleteSavedCredentials()} disabled={busy}>
+            {busy ? "Deleting…" : "Delete saved credentials"}
+          </button>
+        ) : null}
         {message ? <p className="form-error" role="alert">{message}</p> : null}
       </section>
     </main>
