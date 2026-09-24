@@ -20,6 +20,7 @@ jobs:
     timeout-minutes: 15
     env:
       LIVE_TRADING: "false"
+      AUTH_PROVIDER: "FAKE"
 
     steps:
       - name: Checkout
@@ -76,3 +77,41 @@ jobs:
           echo "CI runs without KCEX credentials or authenticated browser state."
           echo "LIVE_TRADING=false"
           echo "No real KCEX order execution belongs in CI."
+
+  browser-fixtures:
+    name: Browser Fixture Auth Flow
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      LIVE_TRADING: "false"
+      AUTH_PROVIDER: "FAKE"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Require lockfile
+        shell: bash
+        run: test -f package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium for fixture tests
+        run: npx playwright install --with-deps chromium
+
+      - name: Run browser fixture tests
+        run: npm run test:browser
+
+      - name: Safety summary
+        shell: bash
+        run: |
+          echo "Fixture-only browser tests ran against loopback HTML."
+          echo "No KCEX host, credentials, cookies, or authenticated storage state were used."
+          echo "LIVE_TRADING=false"

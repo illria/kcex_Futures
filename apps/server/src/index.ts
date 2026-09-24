@@ -1,18 +1,30 @@
 import { resolve } from "node:path";
 import { AuthService } from "./auth/auth-service.js";
+import { FakeAuthAdapter } from "./auth/fake-auth-adapter.js";
+import { KcexAuthAdapter } from "./auth/kcex-auth-adapter.js";
 import { createDashboardServer, getDashboardBindAddress, getDashboardPort, resolveStaticRoot } from "./api/http-server.js";
 import { EventBus } from "./realtime/event-bus.js";
+import { EncryptedSessionStore } from "./session/encrypted-session-store.js";
 import { EncryptedCredentialVault } from "./vault/encrypted-vault.js";
 import { logger } from "../../../src/logging/logger.js";
+import { loadConfig } from "../../../src/config/schema.js";
 
 const startedAt = Date.now();
 const host = getDashboardBindAddress();
 const port = getDashboardPort();
+const config = loadConfig();
 const events = new EventBus();
 const vault = new EncryptedCredentialVault(
   process.env.VAULT_FILE?.trim() || resolve(process.cwd(), "data/credentials.vault.json"),
 );
-const auth = new AuthService(vault, events, logger);
+const sessionStore = new EncryptedSessionStore(
+  vault,
+  process.env.SESSION_FILE?.trim() || resolve(process.cwd(), "data/kcex-session.enc.json"),
+);
+const adapter = config.AUTH_PROVIDER === "KCEX"
+  ? new KcexAuthAdapter({ baseUrl: config.KCEX_BASE_URL, headless: config.BROWSER_HEADLESS })
+  : new FakeAuthAdapter();
+const auth = new AuthService(vault, events, logger, adapter, undefined, undefined, sessionStore);
 const server = createDashboardServer({
   auth,
   vault,

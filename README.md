@@ -169,6 +169,10 @@ TASK-002 使用 React + TypeScript 和本地 TypeScript 服务提供 Dashboard /
 
 Dashboard 和 WebSocket 当前只提供 `GPS_USDT` fixture/mock 数据，`LIVE_TRADING=false`。本阶段不连接 KCEX、不启动真实浏览器、不提交订单；真实 KCEX 登录、Email OTP、持久化会话和实际页面数据属于后续任务。
 
+## TASK-003 Auth Integration Scaffold
+
+TASK-003 将认证提供方显式区分为 `AUTH_PROVIDER=FAKE` 与 `AUTH_PROVIDER=KCEX`。KCEX 适配器只允许在 `https://www.kcex.com` 上填入凭据，并在每次跳转后重新检查 host；未知页面和安全挑战均失败关闭。Playwright storage state 通过 Vault 派生密钥加密保存，解密只在一次内存回调中可见。CI 使用本地 fixture，真实 KCEX 登录、邮箱 OTP 和 session 验证仍为 **DEFERRED MANUAL VERIFICATION**。
+
 ## 推荐技术栈
 
 - Node.js 22+

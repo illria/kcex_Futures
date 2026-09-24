@@ -1,0 +1,17 @@
+<!doctype html>
+<html><body>
+  <main data-testid="otp-form">
+    <h1>Email verification</h1>
+    <p>Verification code fixture</p>
+    <form id="otp-form">
+      <label>Code <input name="code" autocomplete="one-time-code" inputmode="numeric"></label>
+      <button type="submit" data-testid="otp-submit">Verify</button>
+    </form>
+  </main>
+  <script>
+    document.querySelector("#otp-form").addEventListener("submit", function (event) {
+      event.preventDefault();
+      window.location.assign(document.querySelector("input").value === "000000" ? "/authenticated.html" : "/failed.html");
+    });
+  </script>
+</body></html>

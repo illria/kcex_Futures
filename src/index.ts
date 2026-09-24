@@ -122,7 +122,7 @@ async function run(): Promise<void> {
   } catch (error) {
     logger.error(
       { err: error },
-      "Browser startup failed. Confirm Chromium is installed with npm run browser:install.",
+      "Browser startup failed. Chromium setup and KCEX DOM verification are deferred to approved CI/manual runs.",
     );
     process.exitCode = 1;
   } finally {

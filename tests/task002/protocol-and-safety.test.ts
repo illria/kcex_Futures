@@ -15,7 +15,7 @@ describe("shared WebSocket event schemas", () => {
       status: "AUTHENTICATED",
       credentialsSaved: true,
       liveTrading: false,
-      fakeAuth: true,
+      authProvider: "FAKE",
       updatedAt: timestamp,
     });
     const bus = new EventBus();

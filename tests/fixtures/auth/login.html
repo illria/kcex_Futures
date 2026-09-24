@@ -1,0 +1,17 @@
+<!doctype html>
+<html><body>
+  <main data-testid="login-form">
+    <h1>Fixture sign in</h1>
+    <form id="login-form">
+      <label>Account <input name="email" autocomplete="username"></label>
+      <label>Password <input name="password" type="password" autocomplete="current-password"></label>
+      <button type="submit" data-testid="login-submit">Sign in</button>
+    </form>
+  </main>
+  <script>
+    document.querySelector("#login-form").addEventListener("submit", function (event) {
+      event.preventDefault();
+      window.location.assign("/otp.html");
+    });
+  </script>
+</body></html>

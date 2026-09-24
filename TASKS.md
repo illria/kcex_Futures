@@ -31,7 +31,7 @@ No real KCEX login yet.
 
 ### TASK-002.1 — Pre-TASK-003 Security Hardening
 
-Status: REVIEW READY
+Status: COMPLETE
 
 Harden credential plaintext lifetime, credential deletion UI, master-key validation,
 dynamic loopback WebSocket CSP, API validation responses, and secret redaction before TASK-003.
@@ -40,7 +40,7 @@ dynamic loopback WebSocket CSP, API validation responses, and secret redaction b
 
 ### TASK-003 — KCEX Login + Email OTP Integration
 
-Status: NOT STARTED / NEXT
+Status: IN PROGRESS
 
 Spec: [docs/tasks/TASK-003.md](docs/tasks/TASK-003.md)
 

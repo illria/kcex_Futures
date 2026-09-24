@@ -13,13 +13,14 @@ const baseUrlSchema = z
   }, "KCEX_BASE_URL must be an HTTP(S) URL without embedded credentials.");
 
 const environmentSchema = z.object({
-  // SECURITY TODO(TASK-003): before adding credential autofill, restrict this
-  // host to a confirmed official KCEX domain; never autofill to a custom host.
+  // KCEX credential autofill is additionally gated by src/kcex/trusted-host.ts.
+  // This base URL remains configurable for the read-only TASK-001 scaffold.
   KCEX_BASE_URL: z.preprocess(
     (value) => (value === "" ? undefined : value),
     baseUrlSchema.optional(),
   ),
   KCEX_SYMBOL: z.literal("GPS_USDT").optional(),
+  AUTH_PROVIDER: z.enum(["FAKE", "KCEX"]).default("FAKE"),
   BROWSER_HEADLESS: z.enum(["true", "false"]).default("false"),
   BROWSER_PROFILE_DIR: z.string().trim().min(1).default("./data/browser-profile"),
   LIVE_TRADING: z.enum(["true", "false"]).default("false"),
@@ -28,6 +29,7 @@ const environmentSchema = z.object({
 export interface AppConfig {
   KCEX_BASE_URL: string;
   KCEX_SYMBOL: "GPS_USDT";
+  AUTH_PROVIDER: "FAKE" | "KCEX";
   BROWSER_HEADLESS: boolean;
   BROWSER_PROFILE_DIR: string;
   LIVE_TRADING: false;
@@ -46,6 +48,7 @@ export function loadConfig(
   return {
     KCEX_BASE_URL: parsed.KCEX_BASE_URL ?? "https://www.kcex.com",
     KCEX_SYMBOL: "GPS_USDT",
+    AUTH_PROVIDER: parsed.AUTH_PROVIDER,
     BROWSER_HEADLESS: parsed.BROWSER_HEADLESS === "true",
     BROWSER_PROFILE_DIR: parsed.BROWSER_PROFILE_DIR,
     LIVE_TRADING: false,
