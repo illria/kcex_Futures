@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { KcexAuthAdapter } from "../../apps/server/src/auth/kcex-auth-adapter.js";
 import { KCEX_SELECTORS } from "../../src/kcex/selectors.js";
 
-type Marker = "accountInput" | "passwordInput" | "loginSubmit" | "otpInput" | "otpSubmit" | "accountMenu" | "captcha" | "loginError" | "loginForm";
+type Marker = "accountInput" | "passwordInput" | "loginSubmit" | "otpInput" | "otpSubmit" | "accountMenu" | "captcha" | "loginError" | "loginForm" | "loginControl";
 
 interface FixtureState {
   url: string;
@@ -16,13 +16,14 @@ interface FixtureState {
 
 function pageFixture(options: {
   redirectTo?: string;
+  url?: string;
   bodyText?: string;
   visible?: Marker[];
   onLoginSubmit?: () => void;
   onOtpSubmit?: () => void;
 } = {}): { page: Page; state: FixtureState } {
   const state: FixtureState = {
-    url: "https://www.kcex.com/login",
+    url: options.url ?? "https://www.kcex.com/login",
     bodyText: options.bodyText ?? "",
     visible: new Set(options.visible ?? []),
     filled: { account: false, password: false, otp: false },
@@ -41,6 +42,7 @@ function pageFixture(options: {
     if (selector === KCEX_SELECTORS.captcha) return "captcha";
     if (selector === KCEX_SELECTORS.loginError) return "loginError";
     if (selector === KCEX_SELECTORS.loginForm) return "loginForm";
+    if (selector === KCEX_SELECTORS.loginControl) return "loginControl";
     return null;
   };
 
@@ -131,6 +133,35 @@ describe("KcexAuthAdapter result handling", () => {
       await expect(adapter.login(credentials)).resolves.toBe("AUTH_UNKNOWN");
       expect(fixture.state.filled).toEqual({ account: false, password: false, otp: false });
     }
+  });
+
+  it.each([
+    ["account menu", "AUTHENTICATED", ["accountMenu"]],
+    ["OTP input", "OTP_REQUIRED", ["otpInput", "otpSubmit"]],
+    ["captcha", "MANUAL_CHALLENGE", ["captcha"]],
+    ["login form", "SESSION_LOST", ["loginForm"]],
+    ["login control", "SESSION_LOST", ["loginControl"]],
+    ["insufficient evidence", "AUTH_UNKNOWN", []],
+  ] as const)("checkSession returns the trusted %s result", async (_name, expected, visible) => {
+    const fixture = pageFixture({
+      bodyText: expected === "AUTHENTICATED" ? "Sign out" : expected === "OTP_REQUIRED" ? "Email verification" : "",
+      visible: [...visible],
+    });
+    const adapter = new KcexAuthAdapter({ page: fixture.page });
+    await expect(adapter.checkSession()).resolves.toBe(expected);
+  });
+
+  it.each([
+    ["account menu", ["accountMenu"]],
+    ["OTP input", ["otpInput", "otpSubmit"]],
+  ] as const)("checkSession fails closed on an untrusted URL with %s", async (_name, visible) => {
+    const fixture = pageFixture({
+      url: "https://evil.example.invalid/futures/exchange/GPS_USDT",
+      bodyText: visible.includes("accountMenu") ? "Sign out" : "Email verification",
+      visible: [...visible],
+    });
+    const adapter = new KcexAuthAdapter({ page: fixture.page });
+    await expect(adapter.checkSession()).resolves.toBe("AUTH_UNKNOWN");
   });
 
   it("rejects an untrusted KCEX base URL before a page can be opened", () => {

@@ -121,9 +121,18 @@ export class KcexAuthAdapter implements AuthAdapter {
       if (!this.page) return "AUTH_UNKNOWN";
       this.assertTrustedPage(this.page);
       const result = await this.detectResult(this.page, false);
-      if (result === "AUTHENTICATED") return result;
-      if (result === "MANUAL_CHALLENGE" || result === "AUTH_UNKNOWN") return result;
-      return "SESSION_LOST";
+      if (result === "AUTHENTICATED" || result === "OTP_REQUIRED" || result === "MANUAL_CHALLENGE") {
+        return result;
+      }
+
+      // A stale session is only conclusive when the trusted page visibly
+      // exposes its login controls. Do not turn a page with insufficient
+      // evidence into SESSION_LOST, because that would erase a usable session.
+      this.assertTrustedPage(this.page);
+      const loginForm = await visibleLocator(this.page, KCEX_SELECTORS.loginForm);
+      const loginControl = await visibleLocator(this.page, KCEX_SELECTORS.loginControl);
+      if (loginForm || loginControl) return "SESSION_LOST";
+      return "AUTH_UNKNOWN";
     } catch {
       return "AUTH_UNKNOWN";
     }

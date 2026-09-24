@@ -38,11 +38,15 @@ async function closeContext(context: BrowserContext): Promise<void> {
   await context.close().catch(() => undefined);
 }
 
+interface LoopbackGuardOptions {
+  expectedBlockedUrls?: readonly string[];
+  blockedUrls?: string[];
+  unexpectedUrls?: string[];
+}
+
 export async function installLoopbackOnlyGuard(
   context: BrowserContext,
-  onBlockedRequest: (url: string) => void = (url) => {
-    throw new Error(`Non-loopback browser request blocked: ${url}`);
-  },
+  options: LoopbackGuardOptions = {},
 ): Promise<void> {
   await context.route("**/*", async (route) => {
     const requestUrl = route.request().url();
@@ -51,15 +55,21 @@ export async function installLoopbackOnlyGuard(
       hostname = new URL(requestUrl).hostname;
     } catch {
       await route.abort();
-      onBlockedRequest(requestUrl);
+      options.unexpectedUrls?.push(requestUrl);
+      throw new Error(`Non-loopback browser request blocked: ${requestUrl}`);
+    }
+    if (hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1") {
+      await route.continue();
       return;
     }
-    if (hostname !== "127.0.0.1" && hostname !== "localhost" && hostname !== "::1") {
-      await route.abort();
-      onBlockedRequest(requestUrl);
+
+    await route.abort();
+    if (options.expectedBlockedUrls?.includes(requestUrl)) {
+      options.blockedUrls?.push(requestUrl);
       return;
     }
-    await route.continue();
+    options.unexpectedUrls?.push(requestUrl);
+    throw new Error(`Unexpected non-loopback browser request blocked: ${requestUrl}`);
   });
 }
 
@@ -67,13 +77,11 @@ async function run(): Promise<void> {
   const fixture = await startFixtureServer();
   let browser: Browser | undefined;
   let context: BrowserContext | undefined;
-  let externalAttempt = false;
+  let evilContext: BrowserContext | undefined;
   try {
     browser = await chromium.launch({ headless: true });
     context = await browser.newContext();
-    await installLoopbackOnlyGuard(context, () => {
-      externalAttempt = true;
-    });
+    await installLoopbackOnlyGuard(context);
 
     const page = await context.newPage();
     await page.goto(`${fixture.baseUrl}/login.html`);
@@ -100,9 +108,7 @@ async function run(): Promise<void> {
     const storageState = await context.storageState();
     const restoredContext = await browser.newContext({ storageState });
     try {
-      await installLoopbackOnlyGuard(restoredContext, () => {
-        externalAttempt = true;
-      });
+      await installLoopbackOnlyGuard(restoredContext);
       const restoredPage = await restoredContext.newPage();
       await restoredPage.goto(`${fixture.baseUrl}/authenticated.html`);
       assert(await restoredPage.locator('[data-testid="account-menu"]').isVisible(), "storage-state restore fixture failed");
@@ -110,10 +116,19 @@ async function run(): Promise<void> {
       await closeContext(restoredContext);
     }
 
-    await page.goto(`${fixture.baseUrl}/evil-redirect.html`).catch(() => undefined);
-    assert(externalAttempt, "network guard did not observe the blocked external redirect");
+    const expectedBlockedUrls = ["https://evil.example.invalid/credential-capture"];
+    const blockedUrls: string[] = [];
+    const unexpectedUrls: string[] = [];
+    evilContext = await browser.newContext();
+    await installLoopbackOnlyGuard(evilContext, { expectedBlockedUrls, blockedUrls, unexpectedUrls });
+    const evilPage = await evilContext.newPage();
+    await evilPage.goto(`${fixture.baseUrl}/evil-redirect.html`).catch(() => undefined);
+    assert(unexpectedUrls.length === 0, `unexpected outbound request(s): ${unexpectedUrls.join(", ")}`);
+    assert(blockedUrls.length === 1, `expected one blocked URL, received ${blockedUrls.length}`);
+    assert(blockedUrls[0] === expectedBlockedUrls[0], `unexpected blocked URL: ${blockedUrls[0] ?? "<none>"}`);
     console.log("BROWSER_FIXTURE_TESTS=4");
   } finally {
+    if (evilContext) await closeContext(evilContext);
     if (context) await closeContext(context);
     await browser?.close().catch(() => undefined);
     await new Promise<void>((resolvePromise) => fixture.server.close(() => resolvePromise()));
