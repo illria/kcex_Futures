@@ -31,6 +31,7 @@ describe("Task 002 fake auth and OTP lifecycle", () => {
       "VAULT_UNLOCKED",
       "LOGGING_IN",
       "OTP_REQUIRED",
+      "SUBMITTING_OTP",
       "AUTHENTICATED",
     ]);
     await expect(readFile(fixture.filePath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
