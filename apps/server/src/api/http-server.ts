@@ -243,7 +243,7 @@ async function handleApiRequest(
       if (!liveLatest) {
         snapshot.logs = [{
           id: "kcex-read-waiting",
-          level: "info",
+          level: "info" as const,
           message: "Waiting for the first authenticated KCEX read-only snapshot; fixture placeholder only.",
           timestamp: snapshot.logs[0]?.timestamp ?? new Date().toISOString(),
         }, ...snapshot.logs].slice(0, 100);

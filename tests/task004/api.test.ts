@@ -129,7 +129,7 @@ describe("TASK-004 read-only API boundaries", () => {
         try {
           eventsSeen.push(parseDashboardEvent(JSON.parse(message.toString())));
           const types = new Set(eventsSeen.map((event) => event.type));
-          if (["market.snapshot", "account.balance", "futures.contract", "position.changed", "orders.snapshot", "futures.read-health"].every((type) => types.has(type))) {
+          if ((["market.snapshot", "account.balance", "futures.contract", "position.changed", "orders.snapshot", "futures.read-health"] as const).every((type) => types.has(type))) {
             socket.close();
             resolve(eventsSeen);
           }
