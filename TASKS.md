@@ -40,7 +40,7 @@ dynamic loopback WebSocket CSP, API validation responses, and secret redaction b
 
 ### TASK-003 — KCEX Login + Email OTP Integration
 
-Status: REVIEW READY
+Status: COMPLETE
 
 Spec: [docs/tasks/TASK-003.md](docs/tasks/TASK-003.md)
 
@@ -55,7 +55,17 @@ Real local browser verification remains deferred until explicitly approved.
 
 ## Planned
 
-- TASK-004 — KCEX Futures read-only state extractor
+### TASK-004 — KCEX Futures Read-Only State Extractor
+
+Status: IN PROGRESS
+
+- trusted authenticated page source shared with the KCEX adapter
+- explicit read-only market, account, contract, position, and open-order snapshots
+- strict numeric parsing with null for missing or malformed evidence
+- fixture-only WebSocket and browser validation; no write-capable path
+
+## Planned
+
 - TASK-005 — local SQLite trading persistence
 - TASK-006 — paper trading lifecycle
 - TASK-007 — RiskEngine + kill switch

@@ -4,7 +4,7 @@ import { extname, resolve, sep } from "node:path";
 import { WebSocket, WebSocketServer } from "ws";
 import { z } from "zod";
 import { readDashboardPort } from "../../../../packages/shared/src/dashboard-config.js";
-import { createFakeDashboardSnapshot } from "../../../../packages/shared/src/fake-snapshot.js";
+import { createDashboardSnapshot, createFakeDashboardSnapshot, createFakeFuturesSnapshot } from "../../../../packages/shared/src/fake-snapshot.js";
 import {
   MASTER_KEY_MIN_LENGTH,
   parseDashboardEvent,
@@ -14,6 +14,7 @@ import {
 import { AuthService } from "../auth/auth-service.js";
 import { EventBus } from "../realtime/event-bus.js";
 import { EncryptedCredentialVault, VaultLockedError, VaultUnlockError } from "../vault/encrypted-vault.js";
+import type { FuturesReadService } from "../futures/futures-read-service.js";
 
 const UnlockInputSchema = z.object({
   masterKey: z.string().min(MASTER_KEY_MIN_LENGTH).max(4096),
@@ -31,6 +32,7 @@ export interface DashboardServerOptions {
   events: EventBus;
   staticRoot?: string;
   startedAt?: number;
+  futuresRead?: FuturesReadService;
 }
 
 class HttpError extends Error {
@@ -162,6 +164,7 @@ async function handleApiRequest(
   response: ServerResponse,
   auth: AuthService,
   vault: EncryptedCredentialVault,
+  futuresRead: FuturesReadService | undefined,
 ): Promise<boolean> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "127.0.0.1"}`);
   const method = request.method ?? "GET";
@@ -219,8 +222,21 @@ async function handleApiRequest(
 
   if (method === "GET" && url.pathname === "/api/v1/dashboard/snapshot") {
     const state = auth.getState();
-    const snapshot = createFakeDashboardSnapshot(state.status === "AUTHENTICATED");
+    const latest = futuresRead?.getLatestSnapshot() ?? createFakeFuturesSnapshot();
+    const snapshot = createDashboardSnapshot(
+      state.status === "AUTHENTICATED",
+      latest,
+      new Date().toISOString(),
+      futuresRead?.enabled ?? false,
+    );
+    if (state.authProvider === "KCEX" && state.status === "AUTHENTICATED") snapshot.status.kcex = "KCEX_AUTHENTICATED";
     sendJson(response, 200, snapshot);
+    return true;
+  }
+
+  if (method === "GET" && url.pathname === "/api/v1/futures/snapshot") {
+    getStateOrThrow(auth);
+    sendJson(response, 200, futuresRead?.getLatestSnapshot() ?? createFakeFuturesSnapshot());
     return true;
   }
 
@@ -365,7 +381,7 @@ export function createDashboardServer(options: DashboardServerOptions): Server {
     void (async () => {
       try {
         const loopbackHost = requireLoopbackHost(request);
-        const handled = await handleApiRequest(request, response, options.auth, options.vault);
+        const handled = await handleApiRequest(request, response, options.auth, options.vault, options.futuresRead);
         if (!handled) await serveStatic(request, response, options.staticRoot, loopbackHost);
         if (!handled && !response.writableEnded) sendJson(response, 404, { error: "Not found." });
       } catch (error) {

@@ -6,6 +6,9 @@ import { createDashboardServer, getDashboardBindAddress, getDashboardPort, resol
 import { EventBus } from "./realtime/event-bus.js";
 import { EncryptedSessionStore } from "./session/encrypted-session-store.js";
 import { EncryptedCredentialVault } from "./vault/encrypted-vault.js";
+import { KcexAuthenticatedPageSource } from "./futures/trusted-page-source.js";
+import { KcexFuturesReadAdapter } from "./futures/kcex-futures-read-adapter.js";
+import { FuturesReadService } from "./futures/futures-read-service.js";
 import { logger } from "../../../src/logging/logger.js";
 import { loadConfig } from "../../../src/config/schema.js";
 
@@ -25,12 +28,33 @@ const adapter = config.AUTH_PROVIDER === "KCEX"
   ? new KcexAuthAdapter({ baseUrl: config.KCEX_BASE_URL, headless: config.BROWSER_HEADLESS })
   : new FakeAuthAdapter();
 const auth = new AuthService(vault, events, logger, adapter, undefined, undefined, sessionStore);
+const futuresRead = adapter instanceof KcexAuthAdapter
+  ? new FuturesReadService({
+      adapter: new KcexFuturesReadAdapter(new KcexAuthenticatedPageSource(adapter, () => auth.getState().status)),
+      events,
+      logger,
+      authStatus: () => auth.getState().status,
+      enabled: config.KCEX_READONLY_ENABLED,
+      pollMs: config.KCEX_READ_POLL_MS,
+    })
+  : undefined;
+const unsubscribeAuthEvents = futuresRead
+  ? (() => {
+      const readService = futuresRead;
+      return events.subscribe((event) => {
+        if (event.type !== "auth.state") return;
+        if (event.payload.status === "AUTHENTICATED") readService.start();
+        else readService.stop();
+      });
+    })()
+  : undefined;
 const server = createDashboardServer({
   auth,
   vault,
   events,
   startedAt,
   staticRoot: process.env.DASHBOARD_DEV === "true" ? undefined : resolveStaticRoot(),
+  futuresRead,
 });
 
 const heartbeat = setInterval(() => {
@@ -59,6 +83,8 @@ server.listen(port, host, () => {
 
 function shutdown(): void {
   clearInterval(heartbeat);
+  unsubscribeAuthEvents?.();
+  futuresRead?.stop();
   auth.close();
   server.close(() => {
     logger.info({ liveTrading: false }, "Local dashboard server stopped.");

@@ -56,6 +56,10 @@ export function DashboardView({
   auth: AuthState;
   webSocketConnected: boolean;
 }) {
+  const futures = snapshot.futures;
+  const sourceLabel = futures.source === "KCEX" ? "LIVE READ-ONLY" : "FIXTURE";
+  const formatNumber = (value: number | null, digits = 5): string => value === null ? "—" : value.toFixed(digits);
+  const formatSigned = (value: number | null): string => value === null ? "—" : `${value.toFixed(2)} USDT`;
   return (
     <main className="dashboard">
       <section className="status-grid" aria-label="Runtime status">
@@ -67,44 +71,63 @@ export function DashboardView({
         <StatusTile label="Mode" value={snapshot.status.mode} />
         <StatusTile label="Trading" value={snapshot.status.trading} />
         <StatusTile label="Kill Switch" value={snapshot.status.killSwitch} />
+        <StatusTile label="Read Health" value={snapshot.status.readHealth} />
       </section>
 
       <div className="stream-state" role="status">
-        WebSocket: {webSocketConnected ? "CONNECTED" : "DISCONNECTED"} · Fixture data only · Provider: {auth.authProvider}
+        WebSocket: {webSocketConnected ? "CONNECTED" : "DISCONNECTED"} · {sourceLabel} · Provider: {auth.authProvider}
       </div>
 
       <section className="panel market-panel">
         <div className="panel-heading">
           <div>
-            <p className="eyebrow">Market snapshot · mock</p>
-            <h2>{snapshot.market.symbol}</h2>
+            <p className="eyebrow">Market snapshot · {futures.market.health}</p>
+            <h2>{futures.symbol}</h2>
           </div>
-          <span className="source-tag">FIXTURE</span>
+          <span className="source-tag">{sourceLabel}</span>
         </div>
         <div className="metric-grid two">
-          <Metric label="Last Price" value={snapshot.market.lastPrice.toFixed(5)} />
-          <Metric label="Mark Price" value={snapshot.market.markPrice.toFixed(5)} />
+          <Metric label="Last Price" value={formatNumber(futures.market.lastPrice)} />
+          <Metric label="Mark Price" value={formatNumber(futures.market.markPrice)} />
         </div>
       </section>
 
       <section className="panel">
-        <p className="eyebrow">Account · mock</p>
+        <p className="eyebrow">Account · {futures.account.health}</p>
         <div className="metric-grid three">
-          <Metric label="Available USDT" value={snapshot.account.availableUsdt.toFixed(2)} suffix="USDT" />
-          <Metric label="Margin Mode" value={snapshot.account.marginMode} />
-          <Metric label="Leverage" value={`${snapshot.account.leverage}x`} />
+          <Metric label="Available USDT" value={formatNumber(futures.account.availableUsdt, 2)} suffix="USDT" />
+          <Metric label="Margin Mode" value={futures.contract.marginMode} />
+          <Metric label="Leverage" value={futures.contract.leverage === null ? "—" : `${futures.contract.leverage}x`} />
         </div>
       </section>
 
       <section className="panel">
-        <p className="eyebrow">Current Position · mock</p>
+        <p className="eyebrow">Current Position · {futures.position.health}</p>
         <div className="metric-grid four">
-          <Metric label="Side" value={snapshot.position.side} />
-          <Metric label="Entry" value="—" />
-          <Metric label="Position Size" value="0" />
-          <Metric label="Unrealized PnL" value="0.00 USDT" />
+          <Metric label="Side" value={futures.position.side} />
+          <Metric label="Entry" value={formatNumber(futures.position.entryPrice)} />
+          <Metric label="Position Size" value={formatNumber(futures.position.size, 3)} />
+          <Metric label="Unrealized PnL" value={formatSigned(futures.position.unrealizedPnl)} />
         </div>
-        <p className="muted-note">No position is connected or managed by this dashboard.</p>
+        <p className="muted-note">Read-only state; this dashboard never submits or manages orders.</p>
+      </section>
+
+      <section className="panel">
+        <p className="eyebrow">Open Orders · {futures.openOrders.ordersHealth}</p>
+        {futures.openOrders.orders.length === 0 ? (
+          <p className="empty-state">No open orders were observed.</p>
+        ) : (
+          <ul className="runtime-logs">
+            {futures.openOrders.orders.map((order, index) => (
+              <li key={`${order.symbol}-${index}`}>
+                <span>{order.side} {order.type}</span>
+                <span>Price {formatNumber(order.price)}</span>
+                <span>Qty {formatNumber(order.quantity, 3)}</span>
+                <span>{order.status ?? "—"}</span>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <section className="panel">
@@ -137,7 +160,7 @@ export function DashboardView({
         </ul>
       </section>
 
-      <p className="safety-note">Authentication is separate from trading · LIVE_TRADING=false · No order submission or live trading.</p>
+      <p className="safety-note">Authentication is separate from trading · LIVE_TRADING=false · Read-only extractor · No order submission or live trading.</p>
     </main>
   );
 }
@@ -498,16 +521,56 @@ export function App() {
           if (event.payload.status === "AUTHENTICATED") void refreshSnapshot();
         }
         if (event.type === "market.snapshot") {
-          setSnapshot((current) => ({ ...current, market: event.payload }));
-        }
-        if (event.type === "account.balance") {
           setSnapshot((current) => ({
             ...current,
-            account: { ...current.account, availableUsdt: event.payload.available },
+            market: event.payload,
+            futures: { ...current.futures, market: event.payload, updatedAt: event.payload.updatedAt },
           }));
         }
+        if (event.type === "account.balance") {
+          setSnapshot((current) => {
+            const account = {
+              ...current.account,
+              availableUsdt: event.payload.available,
+              health: event.payload.health ?? current.account.health,
+              updatedAt: event.payload.updatedAt ?? current.account.updatedAt,
+              source: event.payload.source,
+            };
+            return { ...current, account, futures: { ...current.futures, account, updatedAt: account.updatedAt } };
+          });
+        }
         if (event.type === "position.changed") {
-          setSnapshot((current) => ({ ...current, position: event.payload }));
+          setSnapshot((current) => ({
+            ...current,
+            position: event.payload,
+            futures: { ...current.futures, position: event.payload, updatedAt: event.payload.updatedAt },
+          }));
+        }
+        if (event.type === "futures.contract") {
+          setSnapshot((current) => ({
+            ...current,
+            contract: event.payload,
+            futures: { ...current.futures, contract: event.payload, updatedAt: event.payload.updatedAt },
+          }));
+        }
+        if (event.type === "orders.snapshot") {
+          setSnapshot((current) => ({
+            ...current,
+            openOrders: event.payload,
+            futures: { ...current.futures, openOrders: event.payload, updatedAt: event.payload.updatedAt },
+          }));
+        }
+        if (event.type === "futures.read-health") {
+          setSnapshot((current) => ({
+            ...current,
+            status: { ...current.status, readHealth: event.payload.health },
+            futures: {
+              ...current.futures,
+              health: event.payload.health,
+              status: event.payload.status,
+              updatedAt: event.payload.updatedAt,
+            },
+          }));
         }
         if (event.type === "scheduler.plan") {
           setSnapshot((current) => ({ ...current, scheduler: event.payload }));

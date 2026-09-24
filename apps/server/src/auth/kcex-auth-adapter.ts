@@ -158,6 +158,20 @@ export class KcexAuthAdapter implements AuthAdapter {
     return this.context.storageState();
   }
 
+  /**
+   * Give a read-only consumer a trusted page for one operation. The official
+   * host is checked before and after the callback so a redirect cannot turn a
+   * DOM read into evidence from an untrusted origin.
+   */
+  async withTrustedPage<T>(operation: (page: Page) => Promise<T>): Promise<T> {
+    const page = this.page;
+    if (!page) throw new Error("KCEX page is not available.");
+    this.assertTrustedPage(page);
+    const result = await operation(page);
+    this.assertTrustedPage(page);
+    return result;
+  }
+
   async close(): Promise<void> {
     if (this.ownsContext) await this.context?.close().catch(() => undefined);
     if (this.ownsBrowser) await this.browser?.close().catch(() => undefined);

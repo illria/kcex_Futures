@@ -21,6 +21,7 @@ jobs:
     env:
       LIVE_TRADING: "false"
       AUTH_PROVIDER: "FAKE"
+      KCEX_READONLY_ENABLED: "false"
 
     steps:
       - name: Checkout
@@ -85,6 +86,7 @@ jobs:
     env:
       LIVE_TRADING: "false"
       AUTH_PROVIDER: "FAKE"
+      KCEX_READONLY_ENABLED: "false"
 
     steps:
       - name: Checkout
@@ -113,5 +115,44 @@ jobs:
         shell: bash
         run: |
           echo "Fixture-only browser tests ran against loopback HTML."
+          echo "No KCEX host, credentials, cookies, or authenticated storage state were used."
+          echo "LIVE_TRADING=false"
+
+  browser-futures:
+    name: Browser Fixture Futures Read-Only Flow
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      LIVE_TRADING: "false"
+      AUTH_PROVIDER: "FAKE"
+      KCEX_READONLY_ENABLED: "false"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Require lockfile
+        shell: bash
+        run: test -f package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium for fixture tests
+        run: npx playwright install --with-deps chromium
+
+      - name: Run futures read-only browser fixtures
+        run: npm run test:browser:futures
+
+      - name: Safety summary
+        shell: bash
+        run: |
+          echo "Read-only futures fixtures ran against loopback HTML only."
           echo "No KCEX host, credentials, cookies, or authenticated storage state were used."
           echo "LIVE_TRADING=false"
