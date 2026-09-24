@@ -157,7 +157,7 @@ describe("KcexAuthAdapter result handling", () => {
   ] as const)("checkSession fails closed on an untrusted URL with %s", async (_name, visible) => {
     const fixture = pageFixture({
       url: "https://evil.example.invalid/futures/exchange/GPS_USDT",
-      bodyText: visible.includes("accountMenu") ? "Sign out" : "Email verification",
+      bodyText: visible[0] === "accountMenu" ? "Sign out" : "Email verification",
       visible: [...visible],
     });
     const adapter = new KcexAuthAdapter({ page: fixture.page });
