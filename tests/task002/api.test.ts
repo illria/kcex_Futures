@@ -110,9 +110,10 @@ describe("local credential and fake auth API", () => {
     const requestCsp = async (host: string) => new Promise<{ status: number; csp: string | undefined }>((resolve, reject) => {
       const request = httpRequest(baseUrl, { headers: { host } }, (incoming) => {
         incoming.resume();
+        const cspHeader = incoming.headers["content-security-policy"];
         resolve({
           status: incoming.statusCode ?? 0,
-          csp: incoming.headers["content-security-policy"],
+          csp: Array.isArray(cspHeader) ? cspHeader.join("; ") : cspHeader,
         });
       });
       request.once("error", reject);
