@@ -74,6 +74,9 @@ export class EncryptedSessionStore {
     } finally {
       serialized = "";
       plaintext?.fill(0);
+      // Playwright storage state is caller-owned input. Once encryption has
+      // completed, remove cookie and origin strings from that object too.
+      clearSensitiveValue(storageState);
     }
   }
 

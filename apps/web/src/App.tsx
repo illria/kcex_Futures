@@ -252,6 +252,23 @@ export function AuthPanel({
     }
   }
 
+  async function checkSession() {
+    if (busy) return;
+    setMessage("");
+    setBusy(true);
+    try {
+      const state = await requestJson<unknown>("/api/v1/auth/session/check", {
+        method: "POST",
+        body: "{}",
+      });
+      onAuthChanged(AuthStateSchema.parse(state));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Session check failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function deleteSavedCredentials() {
     if (!auth.credentialsSaved || busy) return;
     if (!window.confirm("Delete the saved encrypted credentials from this device?")) return;
@@ -360,7 +377,11 @@ export function AuthPanel({
           <p className="eyebrow">{auth.authProvider} authentication</p>
           <h1>Manual security check required</h1>
           <p className="muted-note">A security challenge was detected. Complete it manually in the approved browser, then retry.</p>
+          <button type="button" onClick={() => void checkSession()} disabled={busy}>
+            {busy ? "Checking…" : "Check Again"}
+          </button>
           <p className="safety-note">No CAPTCHA or anti-bot challenge is bypassed automatically.</p>
+          {message ? <p className="form-error" role="alert">{message}</p> : null}
         </section>
       </main>
     );
@@ -373,7 +394,11 @@ export function AuthPanel({
           <p className="eyebrow">{auth.authProvider} authentication</p>
           <h1>Authentication state is unknown</h1>
           <p className="muted-note">The page did not provide enough trusted evidence. No credential action was continued.</p>
+          <button type="button" onClick={() => void checkSession()} disabled={busy}>
+            {busy ? "Checking…" : "Check Again"}
+          </button>
           <p className="safety-note">The workflow fails closed. LIVE_TRADING=false</p>
+          {message ? <p className="form-error" role="alert">{message}</p> : null}
         </section>
       </main>
     );

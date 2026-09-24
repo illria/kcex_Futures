@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isTrustedKcexBaseUrl } from "../kcex/trusted-host.js";
 
 const baseUrlSchema = z
   .string()
@@ -14,7 +15,6 @@ const baseUrlSchema = z
 
 const environmentSchema = z.object({
   // KCEX credential autofill is additionally gated by src/kcex/trusted-host.ts.
-  // This base URL remains configurable for the read-only TASK-001 scaffold.
   KCEX_BASE_URL: z.preprocess(
     (value) => (value === "" ? undefined : value),
     baseUrlSchema.optional(),
@@ -40,13 +40,20 @@ export function loadConfig(
   warn: (message: string) => void = (message) => process.stderr.write(message + "\n"),
 ): AppConfig {
   const parsed = environmentSchema.parse(environment);
+  const baseUrl = parsed.KCEX_BASE_URL ?? "https://www.kcex.com";
+
+  // Fail before constructing the real adapter or opening a browser. FAKE is
+  // intentionally unaffected so CI and fixture auth remain deterministic.
+  if (parsed.AUTH_PROVIDER === "KCEX" && !isTrustedKcexBaseUrl(baseUrl)) {
+    throw new Error("KCEX_BASE_URL must be exactly https://www.kcex.com when AUTH_PROVIDER=KCEX.");
+  }
 
   if (parsed.LIVE_TRADING === "true") {
     warn("LIVE_TRADING=true was ignored; Task 001 always forces LIVE_TRADING=false.");
   }
 
   return {
-    KCEX_BASE_URL: parsed.KCEX_BASE_URL ?? "https://www.kcex.com",
+    KCEX_BASE_URL: baseUrl,
     KCEX_SYMBOL: "GPS_USDT",
     AUTH_PROVIDER: parsed.AUTH_PROVIDER,
     BROWSER_HEADLESS: parsed.BROWSER_HEADLESS === "true",

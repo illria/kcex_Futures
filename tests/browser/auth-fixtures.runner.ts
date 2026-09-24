@@ -38,6 +38,31 @@ async function closeContext(context: BrowserContext): Promise<void> {
   await context.close().catch(() => undefined);
 }
 
+export async function installLoopbackOnlyGuard(
+  context: BrowserContext,
+  onBlockedRequest: (url: string) => void = (url) => {
+    throw new Error(`Non-loopback browser request blocked: ${url}`);
+  },
+): Promise<void> {
+  await context.route("**/*", async (route) => {
+    const requestUrl = route.request().url();
+    let hostname = "";
+    try {
+      hostname = new URL(requestUrl).hostname;
+    } catch {
+      await route.abort();
+      onBlockedRequest(requestUrl);
+      return;
+    }
+    if (hostname !== "127.0.0.1" && hostname !== "localhost" && hostname !== "::1") {
+      await route.abort();
+      onBlockedRequest(requestUrl);
+      return;
+    }
+    await route.continue();
+  });
+}
+
 async function run(): Promise<void> {
   const fixture = await startFixtureServer();
   let browser: Browser | undefined;
@@ -46,14 +71,8 @@ async function run(): Promise<void> {
   try {
     browser = await chromium.launch({ headless: true });
     context = await browser.newContext();
-    await context.route("**/*", async (route) => {
-      const host = new URL(route.request().url()).hostname;
-      if (host !== "127.0.0.1" && host !== "localhost" && host !== "::1") {
-        externalAttempt = true;
-        await route.abort();
-        return;
-      }
-      await route.continue();
+    await installLoopbackOnlyGuard(context, () => {
+      externalAttempt = true;
     });
 
     const page = await context.newPage();
@@ -81,6 +100,9 @@ async function run(): Promise<void> {
     const storageState = await context.storageState();
     const restoredContext = await browser.newContext({ storageState });
     try {
+      await installLoopbackOnlyGuard(restoredContext, () => {
+        externalAttempt = true;
+      });
       const restoredPage = await restoredContext.newPage();
       await restoredPage.goto(`${fixture.baseUrl}/authenticated.html`);
       assert(await restoredPage.locator('[data-testid="account-menu"]').isVisible(), "storage-state restore fixture failed");

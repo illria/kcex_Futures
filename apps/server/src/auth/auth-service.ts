@@ -52,9 +52,24 @@ export class AuthService {
       this.transition("SESSION_CHECK");
       const restored = await this.restoreEncryptedSession();
       if (restored === "AUTHENTICATED") {
+        this.clearPendingOtp();
         this.transition("AUTHENTICATED");
         return this.snapshot();
       }
+      if (restored === "OTP_REQUIRED") {
+        this.establishPendingOtp();
+        this.transition("OTP_REQUIRED");
+        return this.snapshot();
+      }
+      if (restored === "MANUAL_CHALLENGE" || restored === "AUTH_UNKNOWN") {
+        this.clearPendingOtp();
+        this.transition(restored);
+        return this.snapshot();
+      }
+
+      // A conclusively lost or failed session is the only restore outcome that
+      // falls back to credentials. The encrypted session is removed first so
+      // the next unlock cannot retry the same stale state.
       await this.sessionStore.clear().catch(() => undefined);
     }
 
@@ -116,8 +131,12 @@ export class AuthService {
     }
 
     this.clearPendingOtp();
+    this.transition("SUBMITTING_OTP");
     try {
       await this.applyAdapterResult(await this.adapter.submitOtp(candidate));
+      return this.snapshot();
+    } catch {
+      this.transition("AUTH_FAILED");
       return this.snapshot();
     } finally {
       candidate.fill(0);
@@ -153,12 +172,7 @@ export class AuthService {
 
   private async applyAdapterResult(result: AuthAdapterResult): Promise<void> {
     if (result === "OTP_REQUIRED") {
-      const expiresAt = this.now() + this.otpTtlMs;
-      const timer = setTimeout(() => {
-        if (this.pendingOtp?.expiresAt === expiresAt) this.expireOtp();
-      }, this.otpTtlMs);
-      timer.unref();
-      this.pendingOtp = { expiresAt, timer };
+      this.establishPendingOtp();
       this.transition("OTP_REQUIRED");
       return;
     }
@@ -166,6 +180,16 @@ export class AuthService {
     this.clearPendingOtp();
     this.transition(result);
     if (result === "AUTHENTICATED") await this.persistSessionIfAvailable();
+  }
+
+  private establishPendingOtp(): void {
+    this.clearPendingOtp();
+    const expiresAt = this.now() + this.otpTtlMs;
+    const timer = setTimeout(() => {
+      if (this.pendingOtp?.expiresAt === expiresAt) this.expireOtp();
+    }, this.otpTtlMs);
+    timer.unref();
+    this.pendingOtp = { expiresAt, timer };
   }
 
   private async persistSessionIfAvailable(): Promise<void> {

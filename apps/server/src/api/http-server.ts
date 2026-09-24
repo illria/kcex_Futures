@@ -224,6 +224,18 @@ async function handleApiRequest(
     return true;
   }
 
+  if (method === "POST" && url.pathname === "/api/v1/auth/session/check") {
+    const raw = await readJson(request);
+    try {
+      parseRequestBody(EmptyInputSchema, raw);
+      getStateOrThrow(auth);
+      sendJson(response, 200, await auth.checkSession());
+    } finally {
+      clearStringFields(raw);
+    }
+    return true;
+  }
+
   if (method === "POST" && url.pathname === "/api/v1/auth/login") {
     const raw = await readJson(request);
     try {

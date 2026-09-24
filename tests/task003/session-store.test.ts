@@ -59,6 +59,19 @@ describe("encrypted Playwright session store", () => {
     await expect(wrongVault.unlock("task003-wrong-master-key-fixture")).rejects.toBeInstanceOf(VaultUnlockError);
   });
 
+  it("clears sensitive strings from caller-owned storage state after encrypting", async () => {
+    const value = await fixture();
+    const state = {
+      cookies: [{ name: "session", value: "fixture_session_secret" }],
+      origins: [{ origin: "http://127.0.0.1", localStorage: [{ name: "session", value: "fixture_session_secret" }] }],
+    };
+
+    await value.store.save(state);
+
+    expect(JSON.stringify(state)).not.toContain("fixture_session_secret");
+    expect(await readFile(value.sessionPath, "utf8")).not.toContain("fixture_session_secret");
+  });
+
   it("deletes an encrypted session without leaving temporary files", async () => {
     const value = await fixture();
     await value.store.save({ cookies: [], origins: [] });

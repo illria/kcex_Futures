@@ -7,7 +7,7 @@ import {
   type Page,
 } from "playwright";
 import { KCEX_SELECTORS } from "../../../../src/kcex/selectors.js";
-import { assertTrustedKcexUrl } from "../../../../src/kcex/trusted-host.js";
+import { assertTrustedKcexBaseUrl, assertTrustedKcexUrl } from "../../../../src/kcex/trusted-host.js";
 import { buildGpsUsdtFuturesUrl, DEFAULT_KCEX_BASE_URL } from "../../../../src/kcex/urls.js";
 import type { AuthAdapter, AuthAdapterResult, AuthCredentials } from "./auth-adapter.js";
 
@@ -57,6 +57,7 @@ export class KcexAuthAdapter implements AuthAdapter {
     this.ownsContext = !options.context && !options.page;
     this.headless = options.headless ?? true;
     this.baseUrl = options.baseUrl ?? DEFAULT_KCEX_BASE_URL;
+    assertTrustedKcexBaseUrl(this.baseUrl);
     this.loginUrl = new URL("/login", this.baseUrl).toString();
   }
 
@@ -64,12 +65,14 @@ export class KcexAuthAdapter implements AuthAdapter {
     try {
       const page = await this.ensurePage();
       await page.goto(this.loginUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
+      // The final URL is the security boundary. No DOM marker may influence
+      // the auth result until the redirected page has passed this check.
+      this.assertTrustedPage(page);
       const initial = await this.detectResult(page, false);
       if (initial === "AUTHENTICATED" || initial === "MANUAL_CHALLENGE" || initial === "OTP_REQUIRED") {
         return initial;
       }
 
-      this.assertTrustedPage(page);
       const accountInput = await visibleLocator(page, KCEX_SELECTORS.accountInput);
       const passwordInput = await visibleLocator(page, KCEX_SELECTORS.passwordInput);
       const submit = await visibleLocator(page, KCEX_SELECTORS.loginSubmit);
