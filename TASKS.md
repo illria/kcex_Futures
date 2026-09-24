@@ -40,7 +40,7 @@ dynamic loopback WebSocket CSP, API validation responses, and secret redaction b
 
 ### TASK-003 — KCEX Login + Email OTP Integration
 
-Status: IN PROGRESS
+Status: REVIEW READY
 
 Spec: [docs/tasks/TASK-003.md](docs/tasks/TASK-003.md)
 
