@@ -3,8 +3,10 @@ import { readFile, stat } from "node:fs/promises";
 import { extname, resolve, sep } from "node:path";
 import { WebSocket, WebSocketServer } from "ws";
 import { z } from "zod";
+import { readDashboardPort } from "../../../../packages/shared/src/dashboard-config.js";
 import { createFakeDashboardSnapshot } from "../../../../packages/shared/src/fake-snapshot.js";
 import {
+  MASTER_KEY_MIN_LENGTH,
   parseDashboardEvent,
   type AuthState,
   type DashboardEvent,
@@ -13,11 +15,14 @@ import { AuthService } from "../auth/auth-service.js";
 import { EventBus } from "../realtime/event-bus.js";
 import { EncryptedCredentialVault, VaultLockedError, VaultUnlockError } from "../vault/encrypted-vault.js";
 
-const UnlockInputSchema = z.object({ masterKey: z.string().min(1).max(4096) }).strict();
+const UnlockInputSchema = z.object({
+  masterKey: z.string().min(MASTER_KEY_MIN_LENGTH).max(4096),
+}).strict();
 const CredentialsInputSchema = z
   .object({ account: z.string().trim().min(1).max(320), password: z.string().min(1).max(4096), save: z.boolean() })
   .strict();
 const OtpInputSchema = z.object({ code: z.string().regex(/^\d{6}$/) }).strict();
+const EmptyInputSchema = z.object({}).strict();
 const MAX_BODY_BYTES = 16 * 1024;
 
 export interface DashboardServerOptions {
@@ -45,6 +50,15 @@ function sendJson(response: ServerResponse, status: number, body: unknown): void
   response.end(JSON.stringify(body));
 }
 
+function parseRequestBody<Schema extends z.ZodType>(schema: Schema, value: unknown): z.infer<Schema> {
+  try {
+    return schema.parse(value);
+  } catch (error) {
+    if (error instanceof z.ZodError) throw new HttpError(400, "Invalid request.");
+    throw error;
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -70,14 +84,14 @@ async function readJson(request: IncomingMessage): Promise<Record<string, unknow
       serialized = body.toString("utf8");
       value = JSON.parse(serialized);
     } catch {
-      throw new HttpError(400, "Invalid JSON request.");
+      throw new HttpError(400, "Invalid request.");
     } finally {
       serialized = "";
       body.fill(0);
     }
     if (!isRecord(value)) {
       clearStringFields(value);
-      throw new HttpError(400, "Expected a JSON object.");
+      throw new HttpError(400, "Invalid request.");
     }
     return value;
   } finally {
@@ -102,7 +116,7 @@ function clearStringFields(value: unknown): void {
   }
 }
 
-function requireLoopbackHost(request: IncomingMessage): void {
+function requireLoopbackHost(request: IncomingMessage): string {
   const rawHost = request.headers.host;
   if (!rawHost) throw new HttpError(403, "Local dashboard host is required.");
   try {
@@ -114,6 +128,7 @@ function requireLoopbackHost(request: IncomingMessage): void {
     if (hostname !== "127.0.0.1" && hostname !== "localhost" && hostname !== "::1") {
       throw new HttpError(403, "Only loopback dashboard hosts are allowed.");
     }
+    return hostUrl.host.toLowerCase();
   } catch (error) {
     if (error instanceof HttpError) throw error;
     throw new HttpError(403, "Only loopback dashboard hosts are allowed.");
@@ -127,7 +142,7 @@ function requireSameOrigin(request: IncomingMessage): void {
   if (!host) throw new HttpError(403, "Request origin is not allowed.");
   try {
     const origin = new URL(rawOrigin);
-    if ((origin.protocol !== "http:" && origin.protocol !== "https:") || origin.host !== host) {
+    if ((origin.protocol !== "http:" && origin.protocol !== "https:") || origin.host.toLowerCase() !== host.toLowerCase()) {
       throw new HttpError(403, "Request origin is not allowed.");
     }
   } catch (error) {
@@ -152,7 +167,6 @@ async function handleApiRequest(
   const method = request.method ?? "GET";
 
   if (!url.pathname.startsWith("/api/")) return false;
-  requireLoopbackHost(request);
   requireSameOrigin(request);
 
   if (method === "GET" && url.pathname === "/api/v1/auth/state") {
@@ -164,7 +178,7 @@ async function handleApiRequest(
     const raw = await readJson(request);
     let input: z.infer<typeof UnlockInputSchema> | null = null;
     try {
-      input = UnlockInputSchema.parse(raw);
+      input = parseRequestBody(UnlockInputSchema, raw);
       const state = await auth.unlock(input.masterKey);
       sendJson(response, 200, state);
     } finally {
@@ -179,7 +193,7 @@ async function handleApiRequest(
     let input: z.infer<typeof CredentialsInputSchema> | null = null;
     try {
       if (!vault.isUnlocked) throw new HttpError(423, "Unlock the local vault first.");
-      input = CredentialsInputSchema.parse(raw);
+      input = parseRequestBody(CredentialsInputSchema, raw);
       const result = await auth.saveCredentials(input.account, input.password, input.save);
       sendJson(response, 200, { ok: true, credentialsSaved: result.credentialsSaved });
     } finally {
@@ -195,7 +209,11 @@ async function handleApiRequest(
   if (method === "DELETE" && url.pathname === "/api/v1/vault/credentials") {
     if (!vault.isUnlocked) throw new HttpError(423, "Unlock the local vault first.");
     const result = await auth.deleteCredentials();
-    sendJson(response, 200, { ok: true, credentialsSaved: result.credentialsSaved });
+    sendJson(response, 200, {
+      ok: true,
+      credentialsSaved: result.credentialsSaved,
+      auth: auth.getState(),
+    });
     return true;
   }
 
@@ -209,7 +227,7 @@ async function handleApiRequest(
   if (method === "POST" && url.pathname === "/api/v1/auth/login") {
     const raw = await readJson(request);
     try {
-      z.object({}).strict().parse(raw);
+      parseRequestBody(EmptyInputSchema, raw);
       getStateOrThrow(auth);
       sendJson(response, 200, await auth.login());
     } finally {
@@ -224,7 +242,7 @@ async function handleApiRequest(
     let input: z.infer<typeof OtpInputSchema> | null = null;
     try {
       getStateOrThrow(auth);
-      input = OtpInputSchema.parse(raw);
+      input = parseRequestBody(OtpInputSchema, raw);
       codeBuffer = Buffer.from(input.code, "utf8");
       input.code = "";
       sendJson(response, 200, await auth.submitOtp(codeBuffer));
@@ -254,6 +272,7 @@ async function serveStatic(
   request: IncomingMessage,
   response: ServerResponse,
   staticRoot: string | undefined,
+  loopbackHost: string,
 ): Promise<boolean> {
   if (!staticRoot || request.method !== "GET") return false;
   const pathname = new URL(request.url ?? "/", `http://${request.headers.host ?? "127.0.0.1"}`).pathname;
@@ -273,7 +292,7 @@ async function serveStatic(
       "cache-control": "no-store",
       "x-content-type-options": "nosniff",
       "referrer-policy": "no-referrer",
-      "content-security-policy": "default-src 'self'; connect-src 'self' ws://127.0.0.1:6666; frame-ancestors 'none'",
+      "content-security-policy": dashboardContentSecurityPolicy(loopbackHost),
     });
     response.end(content);
     return true;
@@ -282,7 +301,13 @@ async function serveStatic(
       const indexPath = resolve(root, "index.html");
       const html = await readFile(indexPath).catch(() => null);
       if (html) {
-        response.writeHead(200, { "content-type": MIME_TYPES[".html"], "cache-control": "no-store" });
+        response.writeHead(200, {
+          "content-type": MIME_TYPES[".html"],
+          "cache-control": "no-store",
+          "x-content-type-options": "nosniff",
+          "referrer-policy": "no-referrer",
+          "content-security-policy": dashboardContentSecurityPolicy(loopbackHost),
+        });
         response.end(html);
         return true;
       }
@@ -290,6 +315,10 @@ async function serveStatic(
     response.writeHead(404).end();
     return true;
   }
+}
+
+function dashboardContentSecurityPolicy(loopbackHost: string): string {
+  return "default-src 'self'; connect-src 'self' ws://" + loopbackHost + "; frame-ancestors 'none'";
 }
 
 function initialEvents(authState: AuthState, startedAt: number): DashboardEvent[] {
@@ -323,8 +352,9 @@ export function createDashboardServer(options: DashboardServerOptions): Server {
   const server = createServer((request, response) => {
     void (async () => {
       try {
+        const loopbackHost = requireLoopbackHost(request);
         const handled = await handleApiRequest(request, response, options.auth, options.vault);
-        if (!handled) await serveStatic(request, response, options.staticRoot);
+        if (!handled) await serveStatic(request, response, options.staticRoot, loopbackHost);
         if (!handled && !response.writableEnded) sendJson(response, 404, { error: "Not found." });
       } catch (error) {
         if (response.headersSent || response.writableEnded) return;
@@ -380,11 +410,7 @@ export function getDashboardBindAddress(): "127.0.0.1" {
 }
 
 export function getDashboardPort(environment: NodeJS.ProcessEnv = process.env): number {
-  const configured = environment.DASHBOARD_PORT?.trim();
-  if (!configured) return 6666;
-  const port = Number(configured);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("DASHBOARD_PORT must be a valid TCP port.");
-  return port;
+  return readDashboardPort(environment.DASHBOARD_PORT);
 }
 
 export function resolveStaticRoot(root = resolve(process.cwd(), "dist/web")): string {

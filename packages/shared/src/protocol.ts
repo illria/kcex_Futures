@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export const MASTER_KEY_MIN_LENGTH = 12;
+
 export const AuthStatusSchema = z.enum([
   "APP_LOCKED",
   "VAULT_UNLOCKED",

@@ -64,7 +64,12 @@ describe("logger redaction", () => {
       "cookie-value-task002",
       "authorization-value-task002",
       "token-value-task002",
+      "access-token-value-task002",
+      "refresh-token-value-task002",
+      "session-value-task002",
+      "session-id-value-task002",
       "storage-state-value-task002",
+      "storage-state-snake-value-task002",
     ];
 
     logger.info({
@@ -72,12 +77,34 @@ describe("logger redaction", () => {
       credentials: { masterKey: secrets[1], nested: { secret: secrets[2] } },
       request: { body: { otp: secrets[3], verificationCode: secrets[4] } },
       headers: { cookie: secrets[5], authorization: secrets[6] },
-      context: { token: secrets[7], browser: { storageState: secrets[8] } },
+      context: {
+        token: secrets[7],
+        accessToken: secrets[8],
+        refreshToken: secrets[9],
+        session: secrets[10],
+        sessionId: secrets[11],
+        browser: { storageState: secrets[12], storage_state: secrets[13] },
+      },
     }, "Redaction fixture");
 
     for (const secret of secrets) expect(output).not.toContain(secret);
     expect(output).toContain("[REDACTED]");
-    for (const field of ["password", "masterKey", "secret", "otp", "verificationCode", "cookie", "authorization", "token", "storageState"]) {
+    for (const field of [
+      "password",
+      "masterKey",
+      "secret",
+      "otp",
+      "verificationCode",
+      "cookie",
+      "authorization",
+      "token",
+      "accessToken",
+      "refreshToken",
+      "session",
+      "sessionId",
+      "storageState",
+      "storage_state",
+    ]) {
       expect(SECRET_REDACTION_PATHS).toContain(field);
     }
   });
@@ -87,6 +114,8 @@ describe("local dashboard safety defaults", () => {
   it("always binds to IPv4 loopback and defaults to port 6666", () => {
     expect(getDashboardBindAddress()).toBe("127.0.0.1");
     expect(getDashboardPort({})).toBe(6666);
+    expect(getDashboardPort({ DASHBOARD_PORT: "7000" })).toBe(7000);
+    expect(() => getDashboardPort({ DASHBOARD_PORT: "70000" })).toThrow();
   });
 
   it("keeps LIVE_TRADING false even when the environment asks to enable it", () => {
