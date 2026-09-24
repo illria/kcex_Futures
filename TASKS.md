@@ -57,7 +57,7 @@ Real local browser verification remains deferred until explicitly approved.
 
 ### TASK-004 — KCEX Futures Read-Only State Extractor
 
-Status: IN PROGRESS
+Status: REVIEW READY
 
 - trusted authenticated page source shared with the KCEX adapter
 - explicit read-only market, account, contract, position, and open-order snapshots
