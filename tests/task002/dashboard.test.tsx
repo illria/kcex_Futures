@@ -86,7 +86,8 @@ describe("saved credential deletion UI", () => {
       json: async () => ({ ok: true, credentialsSaved: false, auth: nextAuth }),
     } as unknown as Response);
     vi.stubGlobal("fetch", fetchMock);
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const confirmMock = vi.fn().mockReturnValue(true);
+    Object.defineProperty(window, "confirm", { configurable: true, value: confirmMock });
 
     const container = document.createElement("div");
     document.body.append(container);
@@ -135,9 +136,11 @@ describe("saved credential deletion UI", () => {
       expect(container.querySelector<HTMLInputElement>("#kcex-password")?.value).toBe("");
       expect(container.querySelector<HTMLInputElement>("#save-credentials")?.checked).toBe(false);
       expect(container.querySelector("button.secondary")).toBeNull();
+      expect(confirmMock).toHaveBeenCalled();
     } finally {
       await act(async () => root.unmount());
       container.remove();
+      Reflect.deleteProperty(window, "confirm");
     }
   });
 });
