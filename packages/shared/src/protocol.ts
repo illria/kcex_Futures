@@ -155,7 +155,20 @@ export const KcexFuturesSnapshotSchema = z
     freshness: FreshnessSchema,
     updatedAt: timestamp,
   })
-  .strict();
+  .strict()
+  .superRefine((snapshot, context) => {
+    const sources = [
+      snapshot.market.source,
+      snapshot.account.source,
+      snapshot.contract.source,
+      snapshot.position.source,
+      snapshot.openOrders.source,
+      ...snapshot.openOrders.orders.map((order) => order.source),
+    ];
+    if (sources.some((source) => source !== snapshot.source)) {
+      context.addIssue({ code: "custom", message: "Futures snapshot contains mixed data sources." });
+    }
+  });
 export type KcexFuturesSnapshot = z.infer<typeof KcexFuturesSnapshotSchema>;
 
 export const SchedulerPlanSchema = z
@@ -206,7 +219,20 @@ export const DashboardSnapshotSchema = z
     history: z.array(z.never()),
     logs: z.array(RuntimeLogSchema).max(100),
   })
-  .strict();
+  .strict()
+  .superRefine((snapshot, context) => {
+    const sources = [
+      snapshot.futures.source,
+      snapshot.market.source,
+      snapshot.account.source,
+      snapshot.contract.source,
+      snapshot.position.source,
+      snapshot.openOrders.source,
+    ];
+    if (sources.some((source) => source !== snapshot.futures.source)) {
+      context.addIssue({ code: "custom", message: "Dashboard snapshot contains mixed data sources." });
+    }
+  });
 export type DashboardSnapshot = z.infer<typeof DashboardSnapshotSchema>;
 
 const EventMetaSchema = {

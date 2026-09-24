@@ -7,6 +7,8 @@ import type {
   OpenOrdersSnapshot,
   PositionSnapshot,
 } from "./protocol.js";
+import type { BrowserStatus } from "./protocol.js";
+import { assertFuturesSourceConsistency } from "./futures-invariants.js";
 
 export function createFakeFuturesSnapshot(now = new Date().toISOString()): KcexFuturesSnapshot {
   const market: MarketSnapshot = {
@@ -66,16 +68,48 @@ export function createFakeFuturesSnapshot(now = new Date().toISOString()): KcexF
   };
 }
 
+/** A fixture-shaped placeholder used while a KCEX read-only session has no snapshot yet. */
+export function createUnavailableFuturesSnapshot(now = new Date().toISOString()): KcexFuturesSnapshot {
+  const snapshot = createFakeFuturesSnapshot(now);
+  return {
+    ...snapshot,
+    market: {
+      ...snapshot.market,
+      lastPrice: null,
+      markPrice: null,
+      health: "UNKNOWN",
+      freshness: "UNKNOWN",
+    },
+    account: { ...snapshot.account, availableUsdt: null, health: "UNKNOWN" },
+    contract: { ...snapshot.contract, marginMode: "UNKNOWN", leverage: null, health: "UNKNOWN" },
+    position: {
+      ...snapshot.position,
+      side: "UNKNOWN",
+      entryPrice: null,
+      size: null,
+      unrealizedPnl: null,
+      health: "UNKNOWN",
+      freshness: "UNKNOWN",
+    },
+    openOrders: { ...snapshot.openOrders, orders: [], ordersHealth: "UNKNOWN" },
+    health: "UNKNOWN",
+    status: "UNKNOWN",
+    freshness: "UNKNOWN",
+  };
+}
+
 export function createDashboardSnapshot(
   authenticated = false,
   futures = createFakeFuturesSnapshot(),
   now = new Date().toISOString(),
   readOnlyEnabled = false,
+  browser: BrowserStatus = authenticated ? "AUTHENTICATED" : "NOT_STARTED",
 ): DashboardSnapshot {
+  assertFuturesSourceConsistency(futures);
   return {
     status: {
       kcex: authenticated ? "FAKE_AUTHENTICATED" : "LOGIN_REQUIRED",
-      browser: authenticated ? "AUTHENTICATED" : "NOT_STARTED",
+      browser,
       mode: "PAPER",
       trading: "PAUSED",
       killSwitch: "NORMAL",

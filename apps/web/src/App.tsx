@@ -10,10 +10,17 @@ import {
   type AuthState,
   type DashboardEvent,
   type DashboardSnapshot,
+  type FuturesReadStatus,
 } from "../../../packages/shared/src/protocol.js";
 
 interface ApiError extends Error {
   status?: number;
+}
+
+function browserStatusForReadHealth(status: FuturesReadStatus): "READING" | "DEGRADED" | "STOPPED" {
+  if (status === "READY") return "READING";
+  if (status === "PARTIAL" || status === "UNKNOWN") return "DEGRADED";
+  return "STOPPED";
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -81,7 +88,7 @@ export function DashboardView({
       <section className="panel market-panel">
         <div className="panel-heading">
           <div>
-            <p className="eyebrow">Market snapshot · {futures.market.health}</p>
+            <p className="eyebrow">Market snapshot · {futures.market.health} · {futures.market.freshness}</p>
             <h2>{futures.symbol}</h2>
           </div>
           <span className="source-tag">{sourceLabel}</span>
@@ -102,7 +109,7 @@ export function DashboardView({
       </section>
 
       <section className="panel">
-        <p className="eyebrow">Current Position · {futures.position.health}</p>
+        <p className="eyebrow">Current Position · {futures.position.health} · {futures.position.freshness}</p>
         <div className="metric-grid four">
           <Metric label="Side" value={futures.position.side} />
           <Metric label="Entry" value={formatNumber(futures.position.entryPrice)} />
@@ -115,18 +122,29 @@ export function DashboardView({
       <section className="panel">
         <p className="eyebrow">Open Orders · {futures.openOrders.ordersHealth}</p>
         {futures.openOrders.orders.length === 0 ? (
-          <p className="empty-state">No open orders were observed.</p>
+          <p className="empty-state">
+            {futures.openOrders.ordersHealth === "READY"
+              ? "No open orders were observed."
+              : futures.openOrders.ordersHealth === "UNKNOWN"
+                ? "Open orders unavailable."
+                : "Open orders partially available."}
+          </p>
         ) : (
-          <ul className="runtime-logs">
-            {futures.openOrders.orders.map((order, index) => (
-              <li key={`${order.symbol}-${index}`}>
-                <span>{order.side} {order.type}</span>
-                <span>Price {formatNumber(order.price)}</span>
-                <span>Qty {formatNumber(order.quantity, 3)}</span>
-                <span>{order.status ?? "—"}</span>
-              </li>
-            ))}
-          </ul>
+          <>
+            {futures.openOrders.ordersHealth === "PARTIAL" ? (
+              <p className="empty-state">Partial order data.</p>
+            ) : null}
+            <ul className="runtime-logs">
+              {futures.openOrders.orders.map((order, index) => (
+                <li key={`${order.symbol}-${index}`}>
+                  <span>{order.side} {order.type}</span>
+                  <span>Price {formatNumber(order.price)}</span>
+                  <span>Qty {formatNumber(order.quantity, 3)}</span>
+                  <span>{order.status ?? "—"}</span>
+                </li>
+              ))}
+            </ul>
+          </>
         )}
       </section>
 
@@ -524,7 +542,12 @@ export function App() {
           setSnapshot((current) => ({
             ...current,
             market: event.payload,
-            futures: { ...current.futures, market: event.payload, updatedAt: event.payload.updatedAt },
+            futures: {
+              ...current.futures,
+              market: event.payload,
+              freshness: event.payload.freshness,
+              updatedAt: event.payload.updatedAt,
+            },
           }));
         }
         if (event.type === "account.balance") {
@@ -543,7 +566,12 @@ export function App() {
           setSnapshot((current) => ({
             ...current,
             position: event.payload,
-            futures: { ...current.futures, position: event.payload, updatedAt: event.payload.updatedAt },
+            futures: {
+              ...current.futures,
+              position: event.payload,
+              freshness: event.payload.freshness,
+              updatedAt: event.payload.updatedAt,
+            },
           }));
         }
         if (event.type === "futures.contract") {
@@ -563,7 +591,11 @@ export function App() {
         if (event.type === "futures.read-health") {
           setSnapshot((current) => ({
             ...current,
-            status: { ...current.status, readHealth: event.payload.health },
+            status: {
+              ...current.status,
+              readHealth: event.payload.health,
+              browser: browserStatusForReadHealth(event.payload.status),
+            },
             futures: {
               ...current.futures,
               health: event.payload.health,

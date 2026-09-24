@@ -48,6 +48,30 @@ describe("mock dashboard rendering", () => {
     expect(html).not.toContain("Long");
     expect(html).not.toContain("Short");
   });
+
+  it("explains empty, unavailable, and partial open-order evidence", () => {
+    const auth = AuthStateSchema.parse({
+      status: "AUTHENTICATED",
+      credentialsSaved: false,
+      liveTrading: false,
+      authProvider: "FAKE",
+      updatedAt: new Date(0).toISOString(),
+    });
+    const base = createFakeDashboardSnapshot(true, new Date(0).toISOString());
+    const render = (ordersHealth: "READY" | "PARTIAL" | "UNKNOWN", orders = base.futures.openOrders.orders) => renderToStaticMarkup(React.createElement(DashboardView, {
+      snapshot: {
+        ...base,
+        futures: { ...base.futures, openOrders: { ...base.futures.openOrders, orders, ordersHealth } },
+        openOrders: { ...base.openOrders, orders, ordersHealth },
+      },
+      auth,
+      webSocketConnected: true,
+    }));
+
+    expect(render("READY")).toContain("No open orders were observed.");
+    expect(render("UNKNOWN")).toContain("Open orders unavailable.");
+    expect(render("PARTIAL")).toContain("Open orders partially available.");
+  });
 });
 
 describe("saved credential deletion UI", () => {

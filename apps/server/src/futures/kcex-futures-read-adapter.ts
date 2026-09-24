@@ -7,6 +7,7 @@ import { getSymbolFromUrl } from "../../../../src/kcex/urls.js";
 import { normalizeSymbol } from "../../../../src/utils/symbol.js";
 import { parseStrictNumeric } from "../../../../src/kcex/number-parser.js";
 import { KCEX_FUTURES_READ_SELECTORS } from "../../../../src/kcex/futures-read-selectors.js";
+import { assertFuturesSourceConsistency } from "../../../../packages/shared/src/futures-invariants.js";
 import type {
   ContractSnapshot,
   FuturesReadStatus,
@@ -281,6 +282,7 @@ export class KcexFuturesReadAdapter implements FuturesReadAdapter {
           freshness: "FRESH",
           updatedAt: timestamp,
         };
+        assertFuturesSourceConsistency(snapshot);
         return { status: snapshot.status, snapshot };
       });
     } catch (error) {
