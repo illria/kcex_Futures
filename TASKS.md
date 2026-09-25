@@ -41,7 +41,7 @@ Spec: [docs/tasks/TASK-004.md](docs/tasks/TASK-004.md)
 
 ### TASK-005 — Local SQLite Trading Persistence
 
-Status: IN PROGRESS
+Status: REVIEW READY
 
 Spec: [docs/tasks/TASK-005.md](docs/tasks/TASK-005.md)
 

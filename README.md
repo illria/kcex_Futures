@@ -204,7 +204,7 @@ TASK-004 不包含下单、撤单、Long/Short 按钮、杠杆/保证金修改�
 
 ## TASK-005 Local SQLite Trading Persistence
 
-当前状态：IN PROGRESS。
+当前状态：REVIEW READY。
 
 TASK-005 建立本地 SQLite durable storage，用于保存未来上层提供的 trade records、trade lifecycle events、daily plans 和 runtime audit events，并向 Dashboard 提供只读 trade history 与 storage health。默认数据库为 `data/trading.sqlite3`，可通过 `TRADING_DB_FILE` 覆盖；数据库目录和文件权限 best-effort 收紧，数据库文件由 Git 忽略。
 
