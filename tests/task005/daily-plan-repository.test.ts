@@ -27,7 +27,14 @@ describe("DailyPlanRepository", () => {
     expect(storage.dailyPlans.getDailyPlan(plan.dateKey)).toEqual(plan);
     expect(storage.dailyPlans.listDailyPlans()).toEqual([plan]);
 
-    const updated = storage.dailyPlans.upsertDailyPlan({ ...plan, dailyTarget: 5, completed: 2 });
+    const updated = storage.dailyPlans.upsertDailyPlan({
+      dateKey: plan.dateKey,
+      symbol: plan.symbol,
+      dailyTarget: 5,
+      completed: 2,
+      marginUsdt: plan.marginUsdt,
+      leverage: plan.leverage,
+    });
     expect(updated.createdAt).toBe(plan.createdAt);
     expect(updated.dailyTarget).toBe(5);
     expect(updated.completed).toBe(2);
