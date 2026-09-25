@@ -21,26 +21,26 @@ verification.
 
 Real KCEX DOM, authenticated session, and account verification remain deferred.
 
-## Phase 1 — TASK-005: Local SQLite Trading Persistence (in progress)
+## Phase 1 — TASK-005: Local SQLite Trading Persistence (complete)
 
 - built-in Node.js `node:sqlite` storage
 - versioned migrations and bounded repositories
 - trade records, lifecycle event storage, daily plans, and audit events
 - read-only history and storage health APIs
-- no market snapshot time series and no trade generation/execution
+- no market snapshot time series or KCEX order execution
 
-Exit criteria:
-- migrations, repository validation, transaction rollback, secret rejection,
-  and temp-file reopen tests pass in GitHub Actions
-- Dashboard history comes only from stored records
-- all CI jobs pass with `LIVE_TRADING=false`
+Exit criteria completed in GitHub Actions; TASK-005 was merged to main.
 
-## Phase 2 — TASK-006: Paper Trading Lifecycle (planned)
+## Phase 2 — TASK-006: Paper Trading Lifecycle (review ready)
 
 - deterministic lifecycle driven only by an explicit future upper-layer input
 - paper-only positions and simulated outcomes
 - lifecycle transitions persisted through TASK-005 repositories
 - deterministic fixtures and restart/recovery coverage in CI
+- no scheduler, auto trades, KCEX order mutation, or paper write HTTP API
+
+Implementation and acceptance checks are complete in GitHub Actions for PR review;
+TASK-006 remains unmerged and awaits final review.
 
 No KCEX order submission or real position mutation.
 
