@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { createRoot } from "react-dom/client";
 import { FAKE_OTP_CODE } from "../../../packages/shared/src/fake-auth.js";
 import { createFakeDashboardSnapshot } from "../../../packages/shared/src/fake-snapshot.js";
+import { applySnapshotFreshness } from "../../../packages/shared/src/freshness.js";
 import {
   AuthStateSchema,
   DashboardSnapshotSchema,
@@ -10,10 +11,69 @@ import {
   type AuthState,
   type DashboardEvent,
   type DashboardSnapshot,
+  type KcexFuturesSnapshot,
 } from "../../../packages/shared/src/protocol.js";
 
 interface ApiError extends Error {
   status?: number;
+}
+
+/**
+ * Apply the complete reader event as one dashboard state transition. Keeping
+ * the child snapshots together prevents a first KCEX event from leaving a
+ * MOCK parent with KCEX financial children.
+ */
+export function applyFuturesSnapshotToDashboard(
+  current: DashboardSnapshot,
+  futures: KcexFuturesSnapshot,
+): DashboardSnapshot {
+  return DashboardSnapshotSchema.parse({
+    ...current,
+    futures,
+    market: futures.market,
+    account: futures.account,
+    contract: futures.contract,
+    position: futures.position,
+    openOrders: futures.openOrders,
+  });
+}
+
+type FuturesReadHealthPayload = Extract<DashboardEvent, { type: "futures.read-health" }>["payload"];
+
+/**
+ * Reader health is runtime state. It may arrive before the first financial
+ * snapshot, so it intentionally has no source-matching guard and never edits
+ * the cached financial snapshot.
+ */
+export function applyReadHealthToDashboard(
+  current: DashboardSnapshot,
+  payload: FuturesReadHealthPayload,
+): DashboardSnapshot {
+  return DashboardSnapshotSchema.parse({
+    ...current,
+    status: {
+      ...current.status,
+      readHealth: payload.health,
+      browser: payload.browserStatus,
+    },
+  });
+}
+
+/**
+ * Materialize display freshness without changing the immutable read time.
+ * A KCEX placeholder stays UNKNOWN until a real KCEX snapshot is received;
+ * PARTIAL data ages normally, while UNKNOWN and STOPPED cached data is stale.
+ */
+export function materializeDashboardFuturesForDisplay(
+  snapshot: DashboardSnapshot,
+  authProvider: AuthState['authProvider'],
+  now: Date | number | string = Date.now(),
+): KcexFuturesSnapshot {
+  const futures = snapshot.futures;
+  if (authProvider === "KCEX" && futures.source !== "KCEX") return futures;
+  const forceStale = futures.source === "KCEX"
+    && (snapshot.status.browser === "STOPPED" || snapshot.status.readHealth === "UNKNOWN");
+  return applySnapshotFreshness(futures, now, { forceStale });
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -56,6 +116,16 @@ export function DashboardView({
   auth: AuthState;
   webSocketConnected: boolean;
 }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const futures = materializeDashboardFuturesForDisplay(snapshot, auth.authProvider, now);
+  const sourceLabel = futures.source === "KCEX" ? "LIVE READ-ONLY" : "FIXTURE";
+  const formatNumber = (value: number | null, digits = 5): string => value === null ? "—" : value.toFixed(digits);
+  const formatSigned = (value: number | null): string => value === null ? "—" : `${value.toFixed(2)} USDT`;
   return (
     <main className="dashboard">
       <section className="status-grid" aria-label="Runtime status">
@@ -67,44 +137,75 @@ export function DashboardView({
         <StatusTile label="Mode" value={snapshot.status.mode} />
         <StatusTile label="Trading" value={snapshot.status.trading} />
         <StatusTile label="Kill Switch" value={snapshot.status.killSwitch} />
+        <StatusTile label="Read Health" value={snapshot.status.readHealth} />
+        <StatusTile label="Freshness" value={futures.freshness} />
       </section>
 
       <div className="stream-state" role="status">
-        WebSocket: {webSocketConnected ? "CONNECTED" : "DISCONNECTED"} · Fixture data only · Provider: {auth.authProvider}
+        WebSocket: {webSocketConnected ? "CONNECTED" : "DISCONNECTED"} · {sourceLabel} · Provider: {auth.authProvider}
       </div>
 
       <section className="panel market-panel">
         <div className="panel-heading">
           <div>
-            <p className="eyebrow">Market snapshot · mock</p>
-            <h2>{snapshot.market.symbol}</h2>
+            <p className="eyebrow">Market snapshot · {futures.market.health} · {futures.market.freshness}</p>
+            <h2>{futures.symbol}</h2>
           </div>
-          <span className="source-tag">FIXTURE</span>
+          <span className="source-tag">{sourceLabel}</span>
         </div>
         <div className="metric-grid two">
-          <Metric label="Last Price" value={snapshot.market.lastPrice.toFixed(5)} />
-          <Metric label="Mark Price" value={snapshot.market.markPrice.toFixed(5)} />
+          <Metric label="Last Price" value={formatNumber(futures.market.lastPrice)} />
+          <Metric label="Mark Price" value={formatNumber(futures.market.markPrice)} />
         </div>
       </section>
 
       <section className="panel">
-        <p className="eyebrow">Account · mock</p>
+        <p className="eyebrow">Account · {futures.account.health}</p>
         <div className="metric-grid three">
-          <Metric label="Available USDT" value={snapshot.account.availableUsdt.toFixed(2)} suffix="USDT" />
-          <Metric label="Margin Mode" value={snapshot.account.marginMode} />
-          <Metric label="Leverage" value={`${snapshot.account.leverage}x`} />
+          <Metric label="Available USDT" value={formatNumber(futures.account.availableUsdt, 2)} suffix="USDT" />
+          <Metric label="Margin Mode" value={futures.contract.marginMode} />
+          <Metric label="Leverage" value={futures.contract.leverage === null ? "—" : `${futures.contract.leverage}x`} />
         </div>
       </section>
 
       <section className="panel">
-        <p className="eyebrow">Current Position · mock</p>
+        <p className="eyebrow">Current Position · {futures.position.health} · {futures.position.freshness}</p>
         <div className="metric-grid four">
-          <Metric label="Side" value={snapshot.position.side} />
-          <Metric label="Entry" value="—" />
-          <Metric label="Position Size" value="0" />
-          <Metric label="Unrealized PnL" value="0.00 USDT" />
+          <Metric label="Side" value={futures.position.side} />
+          <Metric label="Entry" value={formatNumber(futures.position.entryPrice)} />
+          <Metric label="Position Size" value={formatNumber(futures.position.size, 3)} />
+          <Metric label="Unrealized PnL" value={formatSigned(futures.position.unrealizedPnl)} />
         </div>
-        <p className="muted-note">No position is connected or managed by this dashboard.</p>
+        <p className="muted-note">Read-only state; this dashboard never submits or manages orders.</p>
+      </section>
+
+      <section className="panel">
+        <p className="eyebrow">Open Orders · {futures.openOrders.ordersHealth}</p>
+        {futures.openOrders.orders.length === 0 ? (
+          <p className="empty-state">
+            {futures.openOrders.ordersHealth === "READY"
+              ? "No open orders were observed."
+              : futures.openOrders.ordersHealth === "UNKNOWN"
+                ? "Open orders unavailable."
+                : "Open orders partially available."}
+          </p>
+        ) : (
+          <>
+            {futures.openOrders.ordersHealth === "PARTIAL" ? (
+              <p className="empty-state">Partial order data.</p>
+            ) : null}
+            <ul className="runtime-logs">
+              {futures.openOrders.orders.map((order, index) => (
+                <li key={`${order.symbol}-${index}`}>
+                  <span>{order.side} {order.type}</span>
+                  <span>Price {formatNumber(order.price)}</span>
+                  <span>Qty {formatNumber(order.quantity, 3)}</span>
+                  <span>{order.status ?? "—"}</span>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
       </section>
 
       <section className="panel">
@@ -137,7 +238,7 @@ export function DashboardView({
         </ul>
       </section>
 
-      <p className="safety-note">Authentication is separate from trading · LIVE_TRADING=false · No order submission or live trading.</p>
+      <p className="safety-note">Authentication is separate from trading · LIVE_TRADING=false · Read-only extractor · No order submission or live trading.</p>
     </main>
   );
 }
@@ -497,17 +598,83 @@ export function App() {
           setAuth(event.payload);
           if (event.payload.status === "AUTHENTICATED") void refreshSnapshot();
         }
+        if (event.type === "futures.snapshot") {
+          setSnapshot((current) => {
+            const next = applyFuturesSnapshotToDashboard(current, event.payload);
+            return DashboardSnapshotSchema.parse({
+              ...next,
+              status: {
+                ...next.status,
+                kcex: "KCEX_AUTHENTICATED",
+                readOnlyEnabled: true,
+                readHealth: event.payload.health,
+              },
+            });
+          });
+        }
         if (event.type === "market.snapshot") {
-          setSnapshot((current) => ({ ...current, market: event.payload }));
+          setSnapshot((current) => {
+            if (event.payload.source !== current.futures.source) return current;
+            return DashboardSnapshotSchema.parse({
+              ...current,
+              market: event.payload,
+              futures: {
+                ...current.futures,
+                market: event.payload,
+                freshness: event.payload.freshness,
+              },
+            });
+          });
         }
         if (event.type === "account.balance") {
-          setSnapshot((current) => ({
-            ...current,
-            account: { ...current.account, availableUsdt: event.payload.available },
-          }));
+          setSnapshot((current) => {
+            if (event.payload.source !== current.futures.source) return current;
+            const account = {
+              ...current.account,
+              availableUsdt: event.payload.available,
+              health: event.payload.health ?? current.account.health,
+              updatedAt: event.payload.updatedAt ?? current.account.updatedAt,
+              source: event.payload.source,
+            };
+            return DashboardSnapshotSchema.parse({ ...current, account, futures: { ...current.futures, account } });
+          });
         }
         if (event.type === "position.changed") {
-          setSnapshot((current) => ({ ...current, position: event.payload }));
+          setSnapshot((current) => {
+            if (event.payload.source !== current.futures.source) return current;
+            return DashboardSnapshotSchema.parse({
+              ...current,
+              position: event.payload,
+              futures: {
+                ...current.futures,
+                position: event.payload,
+                freshness: event.payload.freshness,
+              },
+            });
+          });
+        }
+        if (event.type === "futures.contract") {
+          setSnapshot((current) => {
+            if (event.payload.source !== current.futures.source) return current;
+            return DashboardSnapshotSchema.parse({
+              ...current,
+              contract: event.payload,
+              futures: { ...current.futures, contract: event.payload },
+            });
+          });
+        }
+        if (event.type === "orders.snapshot") {
+          setSnapshot((current) => {
+            if (event.payload.source !== current.futures.source) return current;
+            return DashboardSnapshotSchema.parse({
+              ...current,
+              openOrders: event.payload,
+              futures: { ...current.futures, openOrders: event.payload },
+            });
+          });
+        }
+        if (event.type === "futures.read-health") {
+          setSnapshot((current) => applyReadHealthToDashboard(current, event.payload));
         }
         if (event.type === "scheduler.plan") {
           setSnapshot((current) => ({ ...current, scheduler: event.payload }));

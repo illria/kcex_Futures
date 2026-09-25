@@ -4,7 +4,12 @@ import { extname, resolve, sep } from "node:path";
 import { WebSocket, WebSocketServer } from "ws";
 import { z } from "zod";
 import { readDashboardPort } from "../../../../packages/shared/src/dashboard-config.js";
-import { createFakeDashboardSnapshot } from "../../../../packages/shared/src/fake-snapshot.js";
+import {
+  createDashboardSnapshot,
+  createFakeDashboardSnapshot,
+  createFakeFuturesSnapshot,
+  createUnavailableFuturesSnapshot,
+} from "../../../../packages/shared/src/fake-snapshot.js";
 import {
   MASTER_KEY_MIN_LENGTH,
   parseDashboardEvent,
@@ -14,6 +19,7 @@ import {
 import { AuthService } from "../auth/auth-service.js";
 import { EventBus } from "../realtime/event-bus.js";
 import { EncryptedCredentialVault, VaultLockedError, VaultUnlockError } from "../vault/encrypted-vault.js";
+import type { FuturesReadService } from "../futures/futures-read-service.js";
 
 const UnlockInputSchema = z.object({
   masterKey: z.string().min(MASTER_KEY_MIN_LENGTH).max(4096),
@@ -31,6 +37,7 @@ export interface DashboardServerOptions {
   events: EventBus;
   staticRoot?: string;
   startedAt?: number;
+  futuresRead?: FuturesReadService;
 }
 
 class HttpError extends Error {
@@ -162,6 +169,7 @@ async function handleApiRequest(
   response: ServerResponse,
   auth: AuthService,
   vault: EncryptedCredentialVault,
+  futuresRead: FuturesReadService | undefined,
 ): Promise<boolean> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "127.0.0.1"}`);
   const method = request.method ?? "GET";
@@ -219,8 +227,44 @@ async function handleApiRequest(
 
   if (method === "GET" && url.pathname === "/api/v1/dashboard/snapshot") {
     const state = auth.getState();
-    const snapshot = createFakeDashboardSnapshot(state.status === "AUTHENTICATED");
+    const liveLatest = futuresRead?.getLatestSnapshot();
+    const readState = futuresRead?.getReadState();
+    const latest = liveLatest
+      ?? (state.authProvider === "KCEX" ? createUnavailableFuturesSnapshot() : createFakeFuturesSnapshot());
+    const snapshot = createDashboardSnapshot(
+      state.status === "AUTHENTICATED",
+      latest,
+      new Date().toISOString(),
+      futuresRead?.enabled ?? false,
+      futuresRead?.getBrowserStatus() ?? (state.authProvider === "KCEX" ? "NOT_STARTED" : undefined),
+    );
+    if (state.authProvider === "KCEX") {
+      snapshot.status.kcex = state.status === "AUTHENTICATED" ? "KCEX_AUTHENTICATED" : "LOGIN_REQUIRED";
+      snapshot.status.readHealth = readState?.health ?? "UNKNOWN";
+      if (readState) snapshot.status.browser = readState.browserStatus;
+      if (!liveLatest) {
+        snapshot.logs = [{
+          id: "kcex-read-waiting",
+          level: "info" as const,
+          message: "Waiting for the first authenticated KCEX read-only snapshot; fixture placeholder only.",
+          timestamp: snapshot.logs[0]?.timestamp ?? new Date().toISOString(),
+        }, ...snapshot.logs].slice(0, 100);
+      }
+    }
     sendJson(response, 200, snapshot);
+    return true;
+  }
+
+  if (method === "GET" && url.pathname === "/api/v1/futures/snapshot") {
+    const state = getStateOrThrow(auth);
+    if (state.authProvider === "KCEX") {
+      if (state.status !== "AUTHENTICATED") throw new HttpError(409, "Authenticated KCEX session required.");
+      const latest = futuresRead?.getLatestSnapshot();
+      if (!latest) throw new HttpError(503, "KCEX read-only snapshot is not available yet.");
+      sendJson(response, 200, latest);
+      return true;
+    }
+    sendJson(response, 200, futuresRead?.getLatestSnapshot() ?? createFakeFuturesSnapshot());
     return true;
   }
 
@@ -333,19 +377,64 @@ function dashboardContentSecurityPolicy(loopbackHost: string): string {
   return "default-src 'self'; connect-src 'self' ws://" + loopbackHost + "; frame-ancestors 'none'";
 }
 
-function initialEvents(authState: AuthState, startedAt: number): DashboardEvent[] {
+function initialEvents(authState: AuthState, startedAt: number, futuresRead?: FuturesReadService): DashboardEvent[] {
   const now = new Date().toISOString();
-  const snapshot = createFakeDashboardSnapshot(authState.status === "AUTHENTICATED", now);
+  const latest = futuresRead?.getLatestSnapshot();
+  const readState = futuresRead?.getReadState();
+  const isKcex = authState.authProvider === "KCEX";
+  const snapshot = latest
+    ? createDashboardSnapshot(authState.status === "AUTHENTICATED", latest, now, true, readState?.browserStatus)
+    : createFakeDashboardSnapshot(authState.status === "AUTHENTICATED", now);
+  const canSendFinancial = !isKcex || (authState.status === "AUTHENTICATED" && latest != null);
   const proposed: unknown[] = [
     { version: 1, type: "auth.state", timestamp: now, payload: authState },
-    { version: 1, type: "market.snapshot", timestamp: now, payload: snapshot.market },
-    {
-      version: 1,
-      type: "account.balance",
-      timestamp: now,
-      payload: { asset: "USDT", available: snapshot.account.availableUsdt, source: "MOCK" },
-    },
-    { version: 1, type: "position.changed", timestamp: now, payload: snapshot.position },
+  ];
+  if (canSendFinancial) {
+    if (isKcex && latest) {
+      proposed.push({ version: 1, type: "futures.snapshot", timestamp: now, payload: latest });
+    }
+    proposed.push(
+      { version: 1, type: "market.snapshot", timestamp: now, payload: snapshot.market },
+      {
+        version: 1,
+        type: "account.balance",
+        timestamp: now,
+        payload: {
+          asset: "USDT",
+          available: snapshot.account.availableUsdt,
+          source: snapshot.account.source,
+          health: snapshot.account.health,
+          updatedAt: snapshot.account.updatedAt,
+        },
+      },
+    );
+    if (isKcex && latest) {
+      proposed.push(
+        { version: 1, type: "futures.contract", timestamp: now, payload: snapshot.contract },
+        { version: 1, type: "orders.snapshot", timestamp: now, payload: snapshot.openOrders },
+      );
+    }
+    proposed.push({ version: 1, type: "position.changed", timestamp: now, payload: snapshot.position });
+  }
+  if (isKcex && futuresRead) {
+    proposed.push(
+      {
+        version: 1,
+        type: "futures.read-health",
+        timestamp: now,
+        payload: {
+          symbol: "GPS_USDT",
+          status: readState?.status ?? latest?.status ?? "UNKNOWN",
+          health: readState?.health ?? latest?.health ?? "UNKNOWN",
+          browserStatus: readState?.browserStatus ?? "NOT_STARTED",
+          source: latest?.source ?? "KCEX",
+          consecutiveReadFailures: readState?.consecutiveReadFailures ?? 0,
+          updatedAt: readState?.updatedAt ?? latest?.updatedAt ?? now,
+        },
+      },
+    );
+  }
+  proposed.push(
     { version: 1, type: "scheduler.plan", timestamp: now, payload: snapshot.scheduler },
     { version: 1, type: "system.log", timestamp: now, payload: snapshot.logs[0] },
     {
@@ -354,7 +443,7 @@ function initialEvents(authState: AuthState, startedAt: number): DashboardEvent[
       timestamp: now,
       payload: { status: "OK", liveTrading: false, uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000) },
     },
-  ];
+  );
   return proposed.map(parseDashboardEvent);
 }
 
@@ -365,7 +454,7 @@ export function createDashboardServer(options: DashboardServerOptions): Server {
     void (async () => {
       try {
         const loopbackHost = requireLoopbackHost(request);
-        const handled = await handleApiRequest(request, response, options.auth, options.vault);
+        const handled = await handleApiRequest(request, response, options.auth, options.vault, options.futuresRead);
         if (!handled) await serveStatic(request, response, options.staticRoot, loopbackHost);
         if (!handled && !response.writableEnded) sendJson(response, 404, { error: "Not found." });
       } catch (error) {
@@ -402,7 +491,7 @@ export function createDashboardServer(options: DashboardServerOptions): Server {
     const unsubscribe = options.events.subscribe((event) => {
       if (webSocket.readyState === WebSocket.OPEN) webSocket.send(JSON.stringify(event));
     });
-    for (const event of initialEvents(options.auth.getState(), startedAt)) {
+    for (const event of initialEvents(options.auth.getState(), startedAt, options.futuresRead)) {
       webSocket.send(JSON.stringify(event));
     }
     webSocket.on("message", () => webSocket.close(1008, "Read-only event stream."));

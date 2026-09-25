@@ -24,6 +24,8 @@ const environmentSchema = z.object({
   BROWSER_HEADLESS: z.enum(["true", "false"]).default("false"),
   BROWSER_PROFILE_DIR: z.string().trim().min(1).default("./data/browser-profile"),
   LIVE_TRADING: z.enum(["true", "false"]).default("false"),
+  KCEX_READONLY_ENABLED: z.enum(["true", "false"]).default("false"),
+  KCEX_READ_POLL_MS: z.coerce.number().int().min(2_000).max(60_000).default(5_000),
 });
 
 export interface AppConfig {
@@ -33,6 +35,8 @@ export interface AppConfig {
   BROWSER_HEADLESS: boolean;
   BROWSER_PROFILE_DIR: string;
   LIVE_TRADING: false;
+  KCEX_READONLY_ENABLED: boolean;
+  KCEX_READ_POLL_MS: number;
 }
 
 export function loadConfig(
@@ -59,5 +63,7 @@ export function loadConfig(
     BROWSER_HEADLESS: parsed.BROWSER_HEADLESS === "true",
     BROWSER_PROFILE_DIR: parsed.BROWSER_PROFILE_DIR,
     LIVE_TRADING: false,
+    KCEX_READONLY_ENABLED: parsed.KCEX_READONLY_ENABLED === "true",
+    KCEX_READ_POLL_MS: parsed.KCEX_READ_POLL_MS,
   };
 }

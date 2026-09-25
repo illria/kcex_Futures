@@ -4,9 +4,15 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createFakeDashboardSnapshot } from "../../packages/shared/src/fake-snapshot.js";
-import { AuthStateSchema } from "../../packages/shared/src/protocol.js";
-import { AuthPanel, DashboardView } from "../../apps/web/src/App";
+import { createFakeDashboardSnapshot, createUnavailableFuturesSnapshot } from "../../packages/shared/src/fake-snapshot.js";
+import { AuthStateSchema, DashboardSnapshotSchema } from "../../packages/shared/src/protocol.js";
+import {
+  applyFuturesSnapshotToDashboard,
+  applyReadHealthToDashboard,
+  AuthPanel,
+  DashboardView,
+  materializeDashboardFuturesForDisplay,
+} from "../../apps/web/src/App";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -47,6 +53,163 @@ describe("mock dashboard rendering", () => {
     }
     expect(html).not.toContain("Long");
     expect(html).not.toContain("Short");
+  });
+
+  it("explains empty, unavailable, and partial open-order evidence", () => {
+    const auth = AuthStateSchema.parse({
+      status: "AUTHENTICATED",
+      credentialsSaved: false,
+      liveTrading: false,
+      authProvider: "FAKE",
+      updatedAt: new Date(0).toISOString(),
+    });
+    const base = createFakeDashboardSnapshot(true, new Date(0).toISOString());
+    const render = (ordersHealth: "READY" | "PARTIAL" | "UNKNOWN", orders = base.futures.openOrders.orders) => renderToStaticMarkup(React.createElement(DashboardView, {
+      snapshot: {
+        ...base,
+        futures: { ...base.futures, openOrders: { ...base.futures.openOrders, orders, ordersHealth } },
+        openOrders: { ...base.openOrders, orders, ordersHealth },
+      },
+      auth,
+      webSocketConnected: true,
+    }));
+
+    expect(render("READY")).toContain("No open orders were observed.");
+    expect(render("UNKNOWN")).toContain("Open orders unavailable.");
+    expect(render("PARTIAL")).toContain("Open orders partially available.");
+  });
+
+  it("atomically transitions the dashboard from MOCK to a KCEX read-only snapshot", () => {
+    const timestamp = new Date(0).toISOString();
+    const mock = createFakeDashboardSnapshot(true, timestamp);
+    const kcex = {
+      ...mock.futures,
+      source: "KCEX" as const,
+      market: { ...mock.futures.market, source: "KCEX" as const },
+      account: { ...mock.futures.account, source: "KCEX" as const },
+      contract: { ...mock.futures.contract, source: "KCEX" as const },
+      position: { ...mock.futures.position, source: "KCEX" as const },
+      openOrders: {
+        ...mock.futures.openOrders,
+        source: "KCEX" as const,
+        orders: mock.futures.openOrders.orders.map((order) => ({ ...order, source: "KCEX" as const })),
+      },
+    };
+    const transitioned = applyFuturesSnapshotToDashboard(mock, kcex);
+    expect(() => DashboardSnapshotSchema.parse(transitioned)).not.toThrow();
+    expect(transitioned.futures.source).toBe("KCEX");
+    expect(transitioned.market.source).toBe("KCEX");
+    expect(transitioned.account.source).toBe("KCEX");
+    expect(transitioned.contract.source).toBe("KCEX");
+    expect(transitioned.position.source).toBe("KCEX");
+    expect(transitioned.openOrders.source).toBe("KCEX");
+
+    const auth = AuthStateSchema.parse({
+      status: "AUTHENTICATED",
+      credentialsSaved: false,
+      liveTrading: false,
+      authProvider: "KCEX",
+      updatedAt: timestamp,
+    });
+    const html = renderToStaticMarkup(React.createElement(DashboardView, {
+      snapshot: transitioned,
+      auth,
+      webSocketConnected: true,
+    }));
+    expect(html).toContain("LIVE READ-ONLY");
+    expect(html).toContain("Freshness");
+    expect(html).not.toContain(">FIXTURE<");
+  });
+
+  it("applies first-read health without requiring a matching financial source", () => {
+    const timestamp = new Date(0).toISOString();
+    const current = createFakeDashboardSnapshot(true, timestamp);
+    const next = applyReadHealthToDashboard(current, {
+      symbol: "GPS_USDT",
+      status: "UNKNOWN",
+      health: "UNKNOWN",
+      browserStatus: "AUTHENTICATED",
+      source: "KCEX",
+      consecutiveReadFailures: 1,
+      updatedAt: timestamp,
+    });
+
+    expect(next.status.browser).toBe("AUTHENTICATED");
+    expect(next.status.readHealth).toBe("UNKNOWN");
+    expect(next.futures).toEqual(current.futures);
+    expect(next.market).toEqual(current.market);
+    expect(next.account).toEqual(current.account);
+
+    const disabled = applyReadHealthToDashboard(current, {
+      symbol: "GPS_USDT",
+      status: "UNKNOWN",
+      health: "UNKNOWN",
+      browserStatus: "NOT_STARTED",
+      source: "KCEX",
+      consecutiveReadFailures: 0,
+      updatedAt: timestamp,
+    });
+    expect(disabled.status.browser).toBe("NOT_STARTED");
+  });
+
+  it("keeps PARTIAL data fresh, stales failed KCEX cache, and preserves an unavailable placeholder as UNKNOWN", () => {
+    const timestamp = new Date("2026-01-01T00:00:00.000Z").toISOString();
+    const mock = createFakeDashboardSnapshot(true, timestamp);
+    const kcex = {
+      ...mock.futures,
+      source: "KCEX" as const,
+      health: "PARTIAL" as const,
+      status: "PARTIAL" as const,
+      market: { ...mock.futures.market, source: "KCEX" as const, health: "PARTIAL" as const },
+      account: { ...mock.futures.account, source: "KCEX" as const, health: "PARTIAL" as const },
+      contract: { ...mock.futures.contract, source: "KCEX" as const, health: "PARTIAL" as const },
+      position: { ...mock.futures.position, source: "KCEX" as const, health: "PARTIAL" as const },
+      openOrders: {
+        ...mock.futures.openOrders,
+        source: "KCEX" as const,
+        ordersHealth: "PARTIAL" as const,
+        orders: mock.futures.openOrders.orders.map((order) => ({ ...order, source: "KCEX" as const })),
+      },
+    };
+    const partialDashboard = DashboardSnapshotSchema.parse({
+      ...mock,
+      status: { ...mock.status, kcex: "KCEX_AUTHENTICATED", readOnlyEnabled: true, browser: "DEGRADED", readHealth: "PARTIAL" },
+      futures: kcex,
+      market: kcex.market,
+      account: kcex.account,
+      contract: kcex.contract,
+      position: kcex.position,
+      openOrders: kcex.openOrders,
+    });
+    const now = new Date(timestamp).getTime();
+    expect(materializeDashboardFuturesForDisplay(partialDashboard, "KCEX", now).freshness).toBe("FRESH");
+    expect(materializeDashboardFuturesForDisplay(partialDashboard, "KCEX", now + 15_000).freshness).toBe("STALE");
+
+    const failedDashboard = DashboardSnapshotSchema.parse({
+      ...partialDashboard,
+      status: { ...partialDashboard.status, readHealth: "UNKNOWN", browser: "DEGRADED" },
+    });
+    expect(materializeDashboardFuturesForDisplay(failedDashboard, "KCEX", now).freshness).toBe("STALE");
+
+    const stoppedDashboard = DashboardSnapshotSchema.parse({
+      ...partialDashboard,
+      status: { ...partialDashboard.status, readHealth: "READY", browser: "STOPPED" },
+    });
+    expect(materializeDashboardFuturesForDisplay(stoppedDashboard, "KCEX", now).freshness).toBe("STALE");
+
+    const unavailable = createUnavailableFuturesSnapshot(timestamp);
+    const unavailableDashboard = createFakeDashboardSnapshot(true, timestamp);
+    const kcexUnavailable = DashboardSnapshotSchema.parse({
+      ...unavailableDashboard,
+      status: { ...unavailableDashboard.status, kcex: "KCEX_AUTHENTICATED", readOnlyEnabled: true, browser: "DEGRADED", readHealth: "UNKNOWN" },
+      futures: unavailable,
+      market: unavailable.market,
+      account: unavailable.account,
+      contract: unavailable.contract,
+      position: unavailable.position,
+      openOrders: unavailable.openOrders,
+    });
+    expect(materializeDashboardFuturesForDisplay(kcexUnavailable, "KCEX", now + 60_000).freshness).toBe("UNKNOWN");
   });
 });
 

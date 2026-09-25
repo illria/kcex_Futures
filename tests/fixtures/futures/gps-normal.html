@@ -1,0 +1,29 @@
+<!doctype html>
+<html><body>
+  <main data-testid="futures-page">
+    <h1 data-testid="contract-symbol">GPS_USDT</h1>
+    <div data-testid="last-price">0.012345</div>
+    <div data-testid="mark-price">0.012340</div>
+    <div data-testid="available-usdt">523.45 USDT</div>
+    <div data-testid="margin-mode">ISOLATED</div>
+    <div data-testid="leverage">10x</div>
+    <section data-testid="position-container">
+      <span data-testid="position-side">LONG</span>
+      <span data-testid="position-entry">0.012100</span>
+      <span data-testid="position-size">5,000</span>
+      <span data-testid="position-unrealized-pnl">+1.23</span>
+    </section>
+    <table data-testid="open-orders-table"><tbody>
+      <tr data-testid="open-order-row">
+        <td data-testid="order-side">LONG</td><td data-testid="order-type">LIMIT</td>
+        <td data-testid="order-price">0.012500</td><td data-testid="order-quantity">1,000</td>
+        <td data-testid="order-filled">0</td><td data-testid="order-reduce-only">false</td><td data-testid="order-status">OPEN</td>
+      </tr>
+      <tr data-testid="open-order-row">
+        <td data-testid="order-side">SHORT</td><td data-testid="order-type">STOP LOSS</td>
+        <td data-testid="order-price">0.011900</td><td data-testid="order-quantity">500</td>
+        <td data-testid="order-filled">100</td><td data-testid="order-reduce-only">true</td><td data-testid="order-status">TRIGGERED</td>
+      </tr>
+    </tbody></table>
+  </main>
+</body></html>

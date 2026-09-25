@@ -173,6 +173,30 @@ Dashboard 和 WebSocket 当前只提供 `GPS_USDT` fixture/mock 数据，`LIVE_T
 
 TASK-003 将认证提供方显式区分为 `AUTH_PROVIDER=FAKE` 与 `AUTH_PROVIDER=KCEX`。KCEX 适配器只允许在 `https://www.kcex.com` 上填入凭据，并在每次跳转后重新检查 host；未知页面和安全挑战均失败关闭。Playwright storage state 通过 Vault 派生密钥加密保存，解密只在一次内存回调中可见。CI 使用本地 fixture，真实 KCEX 登录、邮箱 OTP 和 session 验证仍为 **DEFERRED MANUAL VERIFICATION**。
 
+## TASK-004 Futures Read-Only State Extractor
+
+当前状态：IN PROGRESS。
+
+TASK-004 把已认证的 KCEX 页面作为一个受信任页面源，向同一个浏览器页面安装只读提取器：
+
+```
+KCEX authenticated browser
+        ↓
+trusted page source
+        ↓
+read-only futures extractor
+        ↓
+FuturesReadService
+        ↓
+shared snapshots / WebSocket
+        ↓
+local Dashboard
+```
+
+提取器只读取 `GPS_USDT` 的显式页面字段：价格、可用 USDT、保证金模式、杠杆、当前仓位和挂单。数值解析严格失败关闭，缺失或格式错误的数据保持 `null`，不会用 `0` 猜测。`KCEX_READONLY_ENABLED` 默认关闭，轮询只在认证状态和受信页面同时满足时启动；会话丢失、挑战页或 symbol 不匹配会停止读取，不会自动登录或刷新。
+
+TASK-004 不包含下单、撤单、Long/Short 按钮、杠杆/保证金修改或真实 KCEX 验证。真实 DOM selector、登录 session 和 GPS_USDT 页面仍标记为 **DEFERRED MANUAL VERIFICATION**。CI 只使用 loopback fixture，并用网络 guard 拒绝意外公网请求。
+
 ## 推荐技术栈
 
 - Node.js 22+

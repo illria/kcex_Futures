@@ -25,6 +25,7 @@ apps/
     src/
       api/
       auth/
+      futures/
       browser/
       kcex/
       realtime/
@@ -225,6 +226,22 @@ The first milestones must only read:
 - active orders
 
 No order button should be clicked before the read-only layer is stable.
+
+TASK-004 makes this boundary explicit:
+
+```
+KcexAuthAdapter page
+  -> KcexAuthenticatedPageSource (official host check)
+  -> KcexFuturesReadAdapter (selectors + strict numeric parser)
+  -> FuturesReadService (single-flight polling)
+  -> shared KcexFuturesSnapshot
+  -> WebSocket / local dashboard
+```
+
+The extractor has no Playwright mutation methods. `KCEX_READONLY_ENABLED=false`
+is the default, and CI uses mock or loopback fixture pages only. A stale session,
+challenge, symbol mismatch, or insufficient evidence stops or degrades the read
+stream; it never triggers credential entry, refresh, or trading.
 
 ### 4. Execution is stateful
 
