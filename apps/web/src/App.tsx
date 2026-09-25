@@ -11,18 +11,11 @@ import {
   type AuthState,
   type DashboardEvent,
   type DashboardSnapshot,
-  type FuturesReadStatus,
   type KcexFuturesSnapshot,
 } from "../../../packages/shared/src/protocol.js";
 
 interface ApiError extends Error {
   status?: number;
-}
-
-function browserStatusForReadHealth(status: FuturesReadStatus): "READING" | "DEGRADED" | "STOPPED" {
-  if (status === "READY") return "READING";
-  if (status === "PARTIAL" || status === "UNKNOWN") return "DEGRADED";
-  return "STOPPED";
 }
 
 /**
@@ -45,7 +38,7 @@ export function applyFuturesSnapshotToDashboard(
   });
 }
 
-type FuturesReadHealthPayload = Extract<DashboardEvent, { type: "futures.read-health" }>['payload'];
+type FuturesReadHealthPayload = Extract<DashboardEvent, { type: "futures.read-health" }>["payload"];
 
 /**
  * Reader health is runtime state. It may arrive before the first financial
@@ -61,7 +54,7 @@ export function applyReadHealthToDashboard(
     status: {
       ...current.status,
       readHealth: payload.health,
-      browser: browserStatusForReadHealth(payload.status),
+      browser: payload.browserStatus,
     },
   });
 }
@@ -614,7 +607,6 @@ export function App() {
                 ...next.status,
                 kcex: "KCEX_AUTHENTICATED",
                 readOnlyEnabled: true,
-                browser: browserStatusForReadHealth(event.payload.status),
                 readHealth: event.payload.health,
               },
             });

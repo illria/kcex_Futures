@@ -426,6 +426,7 @@ function initialEvents(authState: AuthState, startedAt: number, futuresRead?: Fu
           symbol: "GPS_USDT",
           status: readState?.status ?? latest?.status ?? "UNKNOWN",
           health: readState?.health ?? latest?.health ?? "UNKNOWN",
+          browserStatus: readState?.browserStatus ?? "NOT_STARTED",
           source: latest?.source ?? "KCEX",
           consecutiveReadFailures: readState?.consecutiveReadFailures ?? 0,
           updatedAt: readState?.updatedAt ?? latest?.updatedAt ?? now,

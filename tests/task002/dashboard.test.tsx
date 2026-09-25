@@ -128,16 +128,28 @@ describe("mock dashboard rendering", () => {
       symbol: "GPS_USDT",
       status: "UNKNOWN",
       health: "UNKNOWN",
+      browserStatus: "AUTHENTICATED",
       source: "KCEX",
       consecutiveReadFailures: 1,
       updatedAt: timestamp,
     });
 
-    expect(next.status.browser).toBe("DEGRADED");
+    expect(next.status.browser).toBe("AUTHENTICATED");
     expect(next.status.readHealth).toBe("UNKNOWN");
     expect(next.futures).toEqual(current.futures);
     expect(next.market).toEqual(current.market);
     expect(next.account).toEqual(current.account);
+
+    const disabled = applyReadHealthToDashboard(current, {
+      symbol: "GPS_USDT",
+      status: "UNKNOWN",
+      health: "UNKNOWN",
+      browserStatus: "NOT_STARTED",
+      source: "KCEX",
+      consecutiveReadFailures: 0,
+      updatedAt: timestamp,
+    });
+    expect(disabled.status.browser).toBe("NOT_STARTED");
   });
 
   it("keeps PARTIAL data fresh, stales failed KCEX cache, and preserves an unavailable placeholder as UNKNOWN", () => {

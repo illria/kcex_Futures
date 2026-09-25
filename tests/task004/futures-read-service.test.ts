@@ -29,7 +29,11 @@ describe("FuturesReadService", () => {
     let calls = 0;
     const events = new EventBus();
     const seen: string[] = [];
-    events.subscribe((event) => seen.push(event.type));
+    const healthBrowserStatuses: string[] = [];
+    events.subscribe((event) => {
+      seen.push(event.type);
+      if (event.type === "futures.read-health") healthBrowserStatuses.push(event.payload.browserStatus);
+    });
     const service = new FuturesReadService({
       adapter: {
         readSnapshot: () => {
@@ -45,13 +49,19 @@ describe("FuturesReadService", () => {
     release?.();
     await first;
     expect(seen).toEqual(expect.arrayContaining(["futures.snapshot", "market.snapshot", "account.balance", "futures.contract", "position.changed", "orders.snapshot", "futures.read-health"]));
+    expect(healthBrowserStatuses).toEqual(["READING"]);
   });
 
   it("reports browser runtime state and stales cached data after a stop", async () => {
     const timestamp = new Date("2026-01-01T00:00:00.000Z");
+    const healthBrowserStatuses: string[] = [];
+    const events = new EventBus();
+    events.subscribe((event) => {
+      if (event.type === "futures.read-health") healthBrowserStatuses.push(event.payload.browserStatus);
+    });
     const service = new FuturesReadService({
       adapter: { readSnapshot: async () => ({ status: "READY", snapshot: createFakeFuturesSnapshot(timestamp.toISOString()) }) },
-      events: new EventBus(), logger: silentLogger, authStatus: () => "AUTHENTICATED", enabled: true, pollMs: 5000,
+      events, logger: silentLogger, authStatus: () => "AUTHENTICATED", enabled: true, pollMs: 5000,
       now: () => timestamp,
     });
     expect(service.getBrowserStatus()).toBe("AUTHENTICATED");
@@ -61,6 +71,7 @@ describe("FuturesReadService", () => {
     service.stop();
     expect(service.getBrowserStatus()).toBe("STOPPED");
     expect(service.getLatestSnapshot(timestamp)?.freshness).toBe("STALE");
+    expect(healthBrowserStatuses).toEqual(["READING"]);
   });
 
   it("stales the last snapshot when authentication is lost", async () => {
@@ -78,15 +89,21 @@ describe("FuturesReadService", () => {
 
   it("maps partial reads to DEGRADED and terminal reads to STOPPED", async () => {
     let result: "PARTIAL" | "UNKNOWN" = "PARTIAL";
+    const healthBrowserStatuses: string[] = [];
+    const events = new EventBus();
+    events.subscribe((event) => {
+      if (event.type === "futures.read-health") healthBrowserStatuses.push(event.payload.browserStatus);
+    });
     const service = new FuturesReadService({
       adapter: { readSnapshot: async () => ({ status: result, snapshot: result === "PARTIAL" ? createFakeFuturesSnapshot() : undefined }) },
-      events: new EventBus(), logger: silentLogger, authStatus: () => "AUTHENTICATED", enabled: true, pollMs: 5000,
+      events, logger: silentLogger, authStatus: () => "AUTHENTICATED", enabled: true, pollMs: 5000,
     });
     await service.pollOnce();
     expect(service.getBrowserStatus()).toBe("DEGRADED");
     result = "UNKNOWN";
     await service.pollOnce();
     expect(service.getBrowserStatus()).toBe("DEGRADED");
+    expect(healthBrowserStatuses).toEqual(["DEGRADED", "DEGRADED"]);
   });
 
   it("keeps reader health and failure count across reconnect state", async () => {
@@ -127,12 +144,43 @@ describe("FuturesReadService", () => {
   });
 
   it.each(["SESSION_LOST", "SYMBOL_MISMATCH", "MANUAL_CHALLENGE"] as const)("stops polling on %s", async (terminalStatus) => {
+    const healthBrowserStatuses: string[] = [];
+    const events = new EventBus();
+    events.subscribe((event) => {
+      if (event.type === "futures.read-health") healthBrowserStatuses.push(event.payload.browserStatus);
+    });
     const service = new FuturesReadService({
       adapter: { readSnapshot: async () => ({ status: terminalStatus }) },
-      events: new EventBus(), logger: silentLogger, authStatus: () => "AUTHENTICATED", enabled: true, pollMs: 5000,
+      events, logger: silentLogger, authStatus: () => "AUTHENTICATED", enabled: true, pollMs: 5000,
     });
     service.start();
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(service.getBrowserStatus()).toBe("STOPPED");
+    expect(healthBrowserStatuses).toEqual(["STOPPED"]);
+  });
+
+  it("reports NOT_STARTED when read-only polling is disabled", async () => {
+    const service = new FuturesReadService({
+      adapter: { readSnapshot: async () => ({ status: "READY", snapshot: createFakeFuturesSnapshot() }) },
+      events: new EventBus(),
+      logger: silentLogger,
+      authStatus: () => "AUTHENTICATED",
+      enabled: false,
+      pollMs: 5000,
+    });
+    expect(service.getReadState().browserStatus).toBe("NOT_STARTED");
+    expect(await service.pollOnce()).toBeNull();
+  });
+
+  it("reports AUTHENTICATED before the first enabled read", () => {
+    const service = new FuturesReadService({
+      adapter: { readSnapshot: async () => ({ status: "READY", snapshot: createFakeFuturesSnapshot() }) },
+      events: new EventBus(),
+      logger: silentLogger,
+      authStatus: () => "AUTHENTICATED",
+      enabled: true,
+      pollMs: 5000,
+    });
+    expect(service.getReadState().browserStatus).toBe("AUTHENTICATED");
   });
 });

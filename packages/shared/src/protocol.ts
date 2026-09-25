@@ -265,6 +265,7 @@ export const DashboardEventSchema = z.discriminatedUnion("type", [
       symbol: z.literal("GPS_USDT"),
       status: FuturesReadStatusSchema,
       health: ReadHealthSchema,
+      browserStatus: BrowserStatusSchema,
       source: DataSourceSchema,
       consecutiveReadFailures: z.number().int().nonnegative(),
       updatedAt: timestamp,

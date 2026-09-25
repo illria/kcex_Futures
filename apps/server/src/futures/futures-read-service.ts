@@ -186,6 +186,7 @@ export class FuturesReadService {
           symbol: "GPS_USDT",
           status: result.status,
           health: readHealth,
+          browserStatus: this.getBrowserStatus(),
           source: result.snapshot?.source ?? "KCEX",
           consecutiveReadFailures: this.consecutiveReadFailures,
           updatedAt: readStateUpdatedAt,
