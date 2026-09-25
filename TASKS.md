@@ -48,11 +48,11 @@ Spec: [docs/tasks/TASK-005.md](docs/tasks/TASK-005.md)
 - persisted Dashboard history with no fabricated records
 - no scheduler, KCEX mutation, or live trading
 
-## In Progress
+## Review Ready
 
 ### TASK-006 — Paper Trading Lifecycle
 
-Status: IN PROGRESS
+Status: REVIEW READY
 
 Spec: [docs/tasks/TASK-006.md](docs/tasks/TASK-006.md)
 

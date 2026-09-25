@@ -212,7 +212,7 @@ TASK-005 不生成交易或计划，不读取或保存市场 tick、KCEX credent
 
 ## TASK-006 Paper Trading Lifecycle
 
-当前状态：IN PROGRESS。
+当前状态：REVIEW READY（PR #7 未合并，等待最终审核）。
 
 TASK-006 在 TASK-005 SQLite records 上实现确定性的本地 Paper 生命周期。只有 server 内部显式调用才会 plan、open、mark 或 close；Paper Position 与 KCEX Read-Only Position 在 API、WebSocket 和 Dashboard 中分开显示。模拟费率由 `PAPER_FEE_RATE` 配置，默认 `0`，不代表 KCEX 实际费率。
 
