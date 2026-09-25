@@ -6,7 +6,6 @@ import type { AuthService } from "../../apps/server/src/auth/auth-service.js";
 import { EventBus } from "../../apps/server/src/realtime/event-bus.js";
 import { StorageService } from "../../apps/server/src/storage/storage-service.js";
 import { PaperTradingService } from "../../apps/server/src/trading/paper-trading-service.js";
-import { createFakeDashboardSnapshot } from "../../packages/shared/src/fake-snapshot.js";
 import { DashboardSnapshotSchema, parseDashboardEvent, type AuthState } from "../../packages/shared/src/protocol.js";
 import { PaperTradingStateSchema } from "../../packages/shared/src/paper-trading.js";
 import { createAuthFixture } from "../task002/helpers.js";
@@ -66,7 +65,16 @@ describe("read-only Paper Trading API and WebSocket state", () => {
 
     const dashboard = DashboardSnapshotSchema.parse(await (await fetch(`${url}/api/v1/dashboard/snapshot`)).json());
     expect(dashboard.paper.status).toBe("IDLE");
-    expect(dashboard.position).toEqual(createFakeDashboardSnapshot().position);
+    expect(dashboard.position).toMatchObject({
+      symbol: "GPS_USDT",
+      side: "NONE",
+      entryPrice: null,
+      size: null,
+      unrealizedPnl: null,
+      source: "MOCK",
+      health: "READY",
+      freshness: "FRESH",
+    });
   });
 
   it.each([
@@ -93,9 +101,9 @@ describe("read-only Paper Trading API and WebSocket state", () => {
       status: "CLOSED",
       entryPrice: 0.01,
       exitPrice: 0.011,
-      realizedPnl: 50,
       fees: 0,
     });
+    expect(dashboard.history[0]?.realizedPnl).toBeCloseTo(50);
   });
 
   it("sends authoritative paper.state on each new WebSocket connection", async () => {

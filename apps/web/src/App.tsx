@@ -178,7 +178,7 @@ export function DashboardView({
       </section>
 
       <section className="panel">
-        <p className="eyebrow">KCEX Read-Only Position · {futures.position.health} · {futures.position.freshness}</p>
+        <p className="eyebrow">KCEX Read-Only · Current Position · {futures.position.health} · {futures.position.freshness}</p>
         <div className="metric-grid four">
           <Metric label="Side" value={futures.position.side} />
           <Metric label="Entry" value={formatNumber(futures.position.entryPrice)} />
