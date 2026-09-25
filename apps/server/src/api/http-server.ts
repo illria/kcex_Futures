@@ -264,7 +264,7 @@ async function handleApiRequest(
       snapshot.status.storage = "DEGRADED";
       snapshot.logs = [{
         id: "storage-degraded",
-        level: "warn",
+        level: "warn" as const,
         message: "Trade history storage is temporarily unavailable.",
         timestamp: snapshot.logs[0]?.timestamp ?? new Date().toISOString(),
       }, ...snapshot.logs].slice(0, 100);
