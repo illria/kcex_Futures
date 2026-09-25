@@ -62,6 +62,27 @@ describe("TASK-004 read-only API boundaries", () => {
     return `http://127.0.0.1:${address.port}`;
   }
 
+  async function readInitialEvents(url: string): Promise<ReturnType<typeof parseDashboardEvent>[]> {
+    return new Promise((resolve, reject) => {
+      const socket = new WebSocket(url.replace(/^http:/, "ws:") + "/api/v1/events", { headers: { origin: url } });
+      const eventsSeen: ReturnType<typeof parseDashboardEvent>[] = [];
+      socket.once("error", reject);
+      socket.on("message", (message) => {
+        try {
+          const event = parseDashboardEvent(JSON.parse(message.toString()));
+          eventsSeen.push(event);
+          if (event.type === "system.heartbeat") {
+            socket.close();
+            resolve(eventsSeen);
+          }
+        } catch (error) {
+          socket.close();
+          reject(error);
+        }
+      });
+    });
+  }
+
   it("requires an authenticated KCEX state and never serves a mock futures snapshot", async () => {
     const unauthenticatedUrl = await startServer(authState("CREDENTIALS_REQUIRED"));
     const unauthenticated = await fetch(`${unauthenticatedUrl}/api/v1/futures/snapshot`);
@@ -209,6 +230,64 @@ describe("TASK-004 read-only API boundaries", () => {
       expect(health.payload.health).toBe("UNKNOWN");
       expect(health.payload.consecutiveReadFailures).toBe(2);
     }
+  });
+
+  it.each(["SESSION_LOST", "AUTH_UNKNOWN", "MANUAL_CHALLENGE", "OTP_REQUIRED", "AUTH_FAILED"] as const)(
+    "does not send KCEX financial events while auth state is %s",
+    async (status) => {
+      const service = new FuturesReadService({
+        adapter: { readSnapshot: async () => ({ status: "READY", snapshot: kcexSnapshot() }) },
+        events: new EventBus(),
+        logger: { info: () => undefined } as never,
+        authStatus: () => "AUTHENTICATED",
+        enabled: true,
+        pollMs: 5000,
+      });
+      await service.pollOnce();
+
+      const received = await readInitialEvents(await startServer(authState(status), service));
+      const financialTypes = new Set([
+        "futures.snapshot",
+        "market.snapshot",
+        "account.balance",
+        "futures.contract",
+        "position.changed",
+        "orders.snapshot",
+      ]);
+      expect(received.some((event) => financialTypes.has(event.type))).toBe(false);
+      expect(received.some((event) => event.type === "futures.read-health")).toBe(true);
+    },
+  );
+
+  it("sends reader health without financial data when the first KCEX read fails", async () => {
+    const service = new FuturesReadService({
+      adapter: { readSnapshot: async () => ({ status: "UNKNOWN" as const, reason: "fixture has no trusted evidence" }) },
+      events: new EventBus(),
+      logger: { info: () => undefined } as never,
+      authStatus: () => "AUTHENTICATED",
+      enabled: true,
+      pollMs: 5000,
+    });
+    await service.pollOnce();
+    await service.pollOnce();
+
+    const received = await readInitialEvents(await startServer(authState("AUTHENTICATED"), service));
+    const health = received.find((event) => event.type === "futures.read-health");
+    expect(health?.type).toBe("futures.read-health");
+    if (health?.type === "futures.read-health") {
+      expect(health.payload.source).toBe("KCEX");
+      expect(health.payload.status).toBe("UNKNOWN");
+      expect(health.payload.health).toBe("UNKNOWN");
+      expect(health.payload.consecutiveReadFailures).toBe(2);
+    }
+    expect(received.some((event) => [
+      "futures.snapshot",
+      "market.snapshot",
+      "account.balance",
+      "futures.contract",
+      "position.changed",
+      "orders.snapshot",
+    ].includes(event.type))).toBe(false);
   });
 
   it("preserves financial updatedAt and stales cached data after a terminal read", async () => {

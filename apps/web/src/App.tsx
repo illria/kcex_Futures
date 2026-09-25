@@ -45,6 +45,44 @@ export function applyFuturesSnapshotToDashboard(
   });
 }
 
+type FuturesReadHealthPayload = Extract<DashboardEvent, { type: "futures.read-health" }>['payload'];
+
+/**
+ * Reader health is runtime state. It may arrive before the first financial
+ * snapshot, so it intentionally has no source-matching guard and never edits
+ * the cached financial snapshot.
+ */
+export function applyReadHealthToDashboard(
+  current: DashboardSnapshot,
+  payload: FuturesReadHealthPayload,
+): DashboardSnapshot {
+  return DashboardSnapshotSchema.parse({
+    ...current,
+    status: {
+      ...current.status,
+      readHealth: payload.health,
+      browser: browserStatusForReadHealth(payload.status),
+    },
+  });
+}
+
+/**
+ * Materialize display freshness without changing the immutable read time.
+ * A KCEX placeholder stays UNKNOWN until a real KCEX snapshot is received;
+ * PARTIAL data ages normally, while UNKNOWN and STOPPED cached data is stale.
+ */
+export function materializeDashboardFuturesForDisplay(
+  snapshot: DashboardSnapshot,
+  authProvider: AuthState['authProvider'],
+  now: Date | number | string = Date.now(),
+): KcexFuturesSnapshot {
+  const futures = snapshot.futures;
+  if (authProvider === "KCEX" && futures.source !== "KCEX") return futures;
+  const forceStale = futures.source === "KCEX"
+    && (snapshot.status.browser === "STOPPED" || snapshot.status.readHealth === "UNKNOWN");
+  return applySnapshotFreshness(futures, now, { forceStale });
+}
+
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
@@ -91,9 +129,7 @@ export function DashboardView({
     return () => window.clearInterval(timer);
   }, []);
 
-  const futures = applySnapshotFreshness(snapshot.futures, now, {
-    forceStale: snapshot.status.browser === "DEGRADED" || snapshot.status.browser === "STOPPED",
-  });
+  const futures = materializeDashboardFuturesForDisplay(snapshot, auth.authProvider, now);
   const sourceLabel = futures.source === "KCEX" ? "LIVE READ-ONLY" : "FIXTURE";
   const formatNumber = (value: number | null, digits = 5): string => value === null ? "—" : value.toFixed(digits);
   const formatSigned = (value: number | null): string => value === null ? "—" : `${value.toFixed(2)} USDT`;
@@ -646,22 +682,7 @@ export function App() {
           });
         }
         if (event.type === "futures.read-health") {
-          setSnapshot((current) => {
-            if (event.payload.source !== current.futures.source) return current;
-            return DashboardSnapshotSchema.parse({
-              ...current,
-              status: {
-                ...current.status,
-                readHealth: event.payload.health,
-                browser: browserStatusForReadHealth(event.payload.status),
-              },
-              futures: {
-                ...current.futures,
-                health: event.payload.health,
-                status: event.payload.status,
-              },
-            });
-          });
+          setSnapshot((current) => applyReadHealthToDashboard(current, event.payload));
         }
         if (event.type === "scheduler.plan") {
           setSnapshot((current) => ({ ...current, scheduler: event.payload }));

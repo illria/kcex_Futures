@@ -385,10 +385,11 @@ function initialEvents(authState: AuthState, startedAt: number, futuresRead?: Fu
   const snapshot = latest
     ? createDashboardSnapshot(authState.status === "AUTHENTICATED", latest, now, true, readState?.browserStatus)
     : createFakeDashboardSnapshot(authState.status === "AUTHENTICATED", now);
+  const canSendFinancial = !isKcex || (authState.status === "AUTHENTICATED" && latest !== null);
   const proposed: unknown[] = [
     { version: 1, type: "auth.state", timestamp: now, payload: authState },
   ];
-  if (!isKcex || latest) {
+  if (canSendFinancial) {
     if (isKcex && latest) {
       proposed.push({ version: 1, type: "futures.snapshot", timestamp: now, payload: latest });
     }
@@ -406,24 +407,28 @@ function initialEvents(authState: AuthState, startedAt: number, futuresRead?: Fu
           updatedAt: snapshot.account.updatedAt,
         },
       },
-      { version: 1, type: "position.changed", timestamp: now, payload: snapshot.position },
     );
+    if (isKcex && latest) {
+      proposed.push(
+        { version: 1, type: "futures.contract", timestamp: now, payload: snapshot.contract },
+        { version: 1, type: "orders.snapshot", timestamp: now, payload: snapshot.openOrders },
+      );
+    }
+    proposed.push({ version: 1, type: "position.changed", timestamp: now, payload: snapshot.position });
   }
-  if (isKcex && latest) {
+  if (isKcex && futuresRead) {
     proposed.push(
-      { version: 1, type: "futures.contract", timestamp: now, payload: snapshot.contract },
-      { version: 1, type: "orders.snapshot", timestamp: now, payload: snapshot.openOrders },
       {
         version: 1,
         type: "futures.read-health",
         timestamp: now,
         payload: {
           symbol: "GPS_USDT",
-          status: readState?.status ?? latest.status,
-          health: readState?.health ?? latest.health,
-          source: latest.source,
+          status: readState?.status ?? latest?.status ?? "UNKNOWN",
+          health: readState?.health ?? latest?.health ?? "UNKNOWN",
+          source: latest?.source ?? "KCEX",
           consecutiveReadFailures: readState?.consecutiveReadFailures ?? 0,
-          updatedAt: readState?.updatedAt ?? latest.updatedAt,
+          updatedAt: readState?.updatedAt ?? latest?.updatedAt ?? now,
         },
       },
     );
