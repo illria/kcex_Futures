@@ -1,11 +1,17 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { DatabaseSync } from "node:sqlite";
+import { AuditRepository } from "../../apps/server/src/storage/audit-repository.js";
+import { MigrationRunner } from "../../apps/server/src/storage/migrations.js";
+import { StorageDataIntegrityError } from "../../apps/server/src/storage/storage-errors.js";
 import { createMemoryStorage } from "./storage-test-helpers.js";
 
 describe("AuditRepository sensitive payload guard", () => {
   const opened: Array<Awaited<ReturnType<typeof createMemoryStorage>>> = [];
+  const rawDatabases: DatabaseSync[] = [];
 
   afterEach(() => {
     for (const storage of opened.splice(0)) storage.close();
+    for (const database of rawDatabases.splice(0)) database.close();
   });
 
   async function createStorage() {
@@ -49,5 +55,21 @@ describe("AuditRepository sensitive payload guard", () => {
     });
     expect(storage.auditEvents.listAuditEvents()).toEqual([event]);
     expect(() => storage.auditEvents.listAuditEvents({ limit: 101 })).toThrow(RangeError);
+  });
+
+  it("rejects padded audit messages read from the database", () => {
+    const database = new DatabaseSync(":memory:");
+    rawDatabases.push(database);
+    new MigrationRunner(database).run();
+    const repository = new AuditRepository(database, () => new Date("2026-09-25T12:34:56.789Z"));
+    repository.appendAuditEvent({
+      category: "SYSTEM",
+      eventType: "FIXTURE_EVENT",
+      severity: "INFO",
+      message: "audit message",
+    });
+    database.prepare("UPDATE audit_events SET message = ?").run(" padded audit message ");
+
+    expect(() => repository.listAuditEvents()).toThrow(StorageDataIntegrityError);
   });
 });

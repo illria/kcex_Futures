@@ -12,10 +12,14 @@ export type TradeStatus = z.infer<typeof TradeStatusSchema>;
 const utcTimestampSchema = z.string().datetime();
 const nullableNonnegative = z.number().finite().nonnegative().nullable();
 const nullableFinite = z.number().finite().nullable();
+const canonicalNonemptyString = (maximum: number) => z.string().min(1).max(maximum).refine(
+  (value) => value === value.trim(),
+  { message: "Persisted string values must already be trimmed." },
+);
 
 export const TradeHistoryEntrySchema = z.object({
   id: z.string().uuid(),
-  symbol: z.string().trim().min(1).max(64),
+  symbol: canonicalNonemptyString(64),
   mode: TradeModeSchema,
   side: TradeSideSchema,
   status: TradeStatusSchema,
@@ -29,7 +33,7 @@ export type TradeHistoryEntry = z.infer<typeof TradeHistoryEntrySchema>;
 
 export const TradeRecordSchema = z.object({
   id: z.string().uuid(),
-  symbol: z.string().trim().min(1).max(64),
+  symbol: canonicalNonemptyString(64),
   mode: TradeModeSchema,
   side: TradeSideSchema,
   status: TradeStatusSchema,
@@ -43,7 +47,7 @@ export const TradeRecordSchema = z.object({
   plannedAt: utcTimestampSchema.nullable(),
   openedAt: utcTimestampSchema.nullable(),
   closedAt: utcTimestampSchema.nullable(),
-  closeReason: z.string().trim().min(1).max(240).nullable(),
+  closeReason: canonicalNonemptyString(240).nullable(),
   createdAt: utcTimestampSchema,
   updatedAt: utcTimestampSchema,
   version: z.number().int().positive(),
@@ -197,7 +201,7 @@ export const AuditEventRecordSchema = z.object({
   category: AuditCategorySchema,
   eventType: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/),
   severity: AuditSeveritySchema,
-  message: z.string().trim().min(1).max(240),
+  message: canonicalNonemptyString(240),
   payload: z.record(z.string(), z.unknown()).nullable(),
   createdAt: utcTimestampSchema,
 }).strict();

@@ -112,4 +112,29 @@ describe("read-only storage APIs and dashboard history", () => {
     await expect((await fetch(`${url}/api/v1/storage/health`)).json()).resolves.toMatchObject({ status: "DEGRADED", schemaVersion: null });
     expect((await fetch(`${url}/api/v1/history/trades`)).status).toBe(503);
   });
+
+  it.each(["schema_migrations", "trades", "trade_events", "daily_plans", "audit_events"])(
+    "reports DEGRADED when required table %s is missing",
+    async (table) => {
+      const { url, storage } = await startServer();
+      const database = (storage as unknown as {
+        database: { getConnection(): { exec(sql: string): void } };
+      }).database.getConnection();
+      database.exec(`DROP TABLE ${table}`);
+
+      expect(storage.getHealth()).toEqual({ status: "DEGRADED", schemaVersion: null });
+      const health = await (await fetch(`${url}/api/v1/storage/health`)).json() as {
+        status: string;
+        schemaVersion: number | null;
+      };
+      expect(health).toEqual({ status: "DEGRADED", schemaVersion: null });
+
+      const dashboard = await (await fetch(`${url}/api/v1/dashboard/snapshot`)).json() as {
+        status: { storage: string };
+        history: unknown[];
+      };
+      expect(dashboard.status.storage).toBe("DEGRADED");
+      expect(dashboard.history).toEqual([]);
+    },
+  );
 });

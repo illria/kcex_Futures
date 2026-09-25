@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
+import { chmod, mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -28,6 +28,12 @@ describe("SQLite file lifecycle", () => {
     expect(fileMode).toBe(0o600);
 
     const trade = storage.trades.createTrade(plannedTradeInput({ quantity: 7, entryPrice: 0.02 }));
+    const filesWhileOpen = await readdir(directory);
+    for (const sidecar of ["trading.sqlite3-wal", "trading.sqlite3-shm"]) {
+      if (filesWhileOpen.includes(sidecar)) {
+        expect((await stat(join(directory, sidecar))).mode & 0o777).toBe(0o600);
+      }
+    }
     storage.close();
     storage.close();
 
@@ -37,9 +43,36 @@ describe("SQLite file lifecycle", () => {
     expect(reopened.getSchemaVersion()).toBe(1);
     expect(reopened.trades.getTrade(trade.id)).toEqual(trade);
     expect(reopened.getRecentTradeHistory()).toHaveLength(1);
-    reopened.close();
 
     const files = await readdir(directory);
     expect(files).toContain("trading.sqlite3");
+    reopened.close();
+  });
+
+  it("preserves permissions on an existing custom parent and protects the database file", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "kcex-custom-parent-"));
+    temporaryDirectories.push(parent);
+    await chmod(parent, 0o755);
+    const fileName = join(parent, "trading.sqlite3");
+    const storage = new StorageService({ databaseFile: fileName });
+    opened.push(storage);
+    await storage.initialize();
+
+    expect((await stat(parent)).mode & 0o777).toBe(0o755);
+    expect((await stat(fileName)).mode & 0o777).toBe(0o600);
+  });
+
+  it("creates missing custom nested directories with private permissions", async () => {
+    const root = await mkdtemp(join(tmpdir(), "kcex-custom-nested-"));
+    temporaryDirectories.push(root);
+    const parent = join(root, "new-parent", "nested");
+    const fileName = join(parent, "trading.sqlite3");
+    const storage = new StorageService({ databaseFile: fileName });
+    opened.push(storage);
+    await storage.initialize();
+
+    expect((await stat(join(root, "new-parent"))).mode & 0o777).toBe(0o700);
+    expect((await stat(parent)).mode & 0o777).toBe(0o700);
+    expect((await stat(fileName)).mode & 0o777).toBe(0o600);
   });
 });

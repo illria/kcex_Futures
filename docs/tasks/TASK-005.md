@@ -14,6 +14,10 @@ create trades, simulate trades, or execute orders.
   package dependency.
 - Default database: `data/trading.sqlite3`; `TRADING_DB_FILE` may override it.
 - Best-effort `0700` database directory and `0600` database file permissions.
+- The app-managed default `data/` directory may be tightened to `0700`; an
+  existing custom parent directory keeps its existing permissions, while newly
+  created custom directories use private permissions. Existing SQLite WAL/SHM
+  sidecars are only chmodded best-effort and are never manually created.
 - Startup PRAGMAs, schema migrations, repositories, transactions, and idempotent
   database close.
 - Durable trade records, append-only trade lifecycle events, daily plan records,
@@ -69,8 +73,9 @@ is stale. A transition rolls back both the trade update and event append if
 either operation fails.
 
 Write input is Zod-validated before SQL. Every row is parsed again when read;
-invalid database rows raise `StorageDataIntegrityError` and are not exposed to
-the Dashboard.
+read/output schemas require canonical persisted strings and do not trim or
+repair database content. Invalid database rows raise
+`StorageDataIntegrityError` and are not exposed to the Dashboard.
 
 ## Sensitive data exclusions
 
@@ -90,6 +95,8 @@ session store. No live-arm or `LIVE_TRADING` enablement value is persisted.
   DTOs in deterministic newest-first order (`created_at DESC, id DESC`).
 - `GET /api/v1/storage/health` returns only `READY|DEGRADED` and schema version;
   it never returns a file path, SQL, credentials, or account data.
+- `READY` requires a live connection, the supported migration version, and
+  bounded schema probes for every required storage table.
 - `GET /api/v1/dashboard/snapshot` includes the latest 50 stored history rows,
   `status.storage`, and an empty history plus a safe degraded log if a runtime
   storage read fails.

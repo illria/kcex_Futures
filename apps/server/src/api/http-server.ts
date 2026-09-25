@@ -243,8 +243,9 @@ async function handleApiRequest(
     let storageFailed = false;
     try {
       if (storage?.isReady) {
-        history = storage.getRecentTradeHistory(50);
         storageStatus = storage.getHealth().status;
+        if (storageStatus === "READY") history = storage.getRecentTradeHistory(50);
+        else storageFailed = true;
       } else {
         storageFailed = true;
       }

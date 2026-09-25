@@ -10,6 +10,7 @@ import { DailyPlanRepository } from "./daily-plan-repository.js";
 import { SQLiteDatabase } from "./sqlite-database.js";
 import { DatabaseSchemaTooNewError, StorageInitializationError } from "./storage-errors.js";
 import { TradeRepository } from "./trade-repository.js";
+import { SCHEMA_VERSION } from "./migrations.js";
 
 export interface StorageServiceOptions {
   databaseFile?: string;
@@ -78,9 +79,20 @@ export class StorageService {
   getHealth(): StorageHealth {
     if (!this.isReady) return StorageHealthSchema.parse({ status: "DEGRADED", schemaVersion: null });
     try {
-      const readiness = this.database.getConnection().prepare("SELECT 1 AS ready").get() as { ready?: number } | undefined;
-      if (readiness?.ready !== 1) return StorageHealthSchema.parse({ status: "DEGRADED", schemaVersion: null });
-      return StorageHealthSchema.parse({ status: "READY", schemaVersion: this.database.getSchemaVersion() });
+      const connection = this.database.getConnection();
+      const readiness = connection.prepare("SELECT 1 AS ready").get() as { ready?: number } | undefined;
+      const migration = connection.prepare("SELECT MAX(version) AS version FROM schema_migrations").get() as
+        | { version: number | null }
+        | undefined;
+      if (
+        readiness?.ready !== 1
+        || this.database.getSchemaVersion() !== SCHEMA_VERSION
+        || migration?.version !== SCHEMA_VERSION
+      ) {
+        return StorageHealthSchema.parse({ status: "DEGRADED", schemaVersion: null });
+      }
+      for (const probe of REQUIRED_STORAGE_PROBES) connection.prepare(probe).get();
+      return StorageHealthSchema.parse({ status: "READY", schemaVersion: SCHEMA_VERSION });
     } catch {
       return StorageHealthSchema.parse({ status: "DEGRADED", schemaVersion: null });
     }
@@ -116,3 +128,13 @@ export class StorageService {
     if (!this.isReady) throw new StorageInitializationError();
   }
 }
+
+const REQUIRED_STORAGE_PROBES = [
+  "SELECT version, name, applied_at FROM schema_migrations LIMIT 0",
+  `SELECT id, symbol, mode, side, status, margin_usdt, leverage, quantity,
+    entry_price, exit_price, realized_pnl, fees, planned_at, opened_at, closed_at,
+    close_reason, created_at, updated_at, version FROM trades LIMIT 0`,
+  "SELECT id, trade_id, event_type, event_time, payload_json, created_at FROM trade_events LIMIT 0",
+  "SELECT date_key, symbol, daily_target, completed, margin_usdt, leverage, created_at, updated_at FROM daily_plans LIMIT 0",
+  "SELECT id, category, event_type, severity, message, payload_json, created_at FROM audit_events LIMIT 0",
+] as const;

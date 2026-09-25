@@ -71,6 +71,21 @@ describe("TradeRepository", () => {
     expect(() => repository.getTrade(trade.id)).toThrow(StorageDataIntegrityError);
   });
 
+  it("rejects persisted strings that are padded instead of silently trimming them", () => {
+    const database = new DatabaseSync(":memory:");
+    rawDatabases.push(database);
+    new MigrationRunner(database).run();
+    const repository = new TradeRepository(database, () => new Date("2026-01-01T00:00:00.000Z"));
+    const trade = repository.createTrade(plannedTradeInput({ closeReason: "planned reason" }));
+
+    database.prepare("UPDATE trades SET symbol = ? WHERE id = ?").run(" GPS_USDT ", trade.id);
+    expect(() => repository.getTrade(trade.id)).toThrow(StorageDataIntegrityError);
+
+    database.prepare("UPDATE trades SET symbol = ?, close_reason = ? WHERE id = ?")
+      .run("GPS_USDT", " corrupted reason ", trade.id);
+    expect(() => repository.getTrade(trade.id)).toThrow(StorageDataIntegrityError);
+  });
+
   it("bounds list queries to at most 100 rows", async () => {
     const storage = await storageWithClock();
     expect(() => storage.trades.listTrades({ limit: 0 })).toThrow(RangeError);

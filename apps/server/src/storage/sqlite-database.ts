@@ -21,7 +21,9 @@ export class SQLiteDatabase {
   async initialize(): Promise<number> {
     if (this.connection) return this.schemaVersion;
     const fileName = this.resolveFileName();
-    if (fileName !== ":memory:") await preparePrivateDatabaseFile(fileName);
+    if (fileName !== ":memory:") {
+      await preparePrivateDatabaseFile(fileName, !this.hasCustomFileName());
+    }
 
     const database = new DatabaseSync(fileName);
     try {
@@ -31,6 +33,7 @@ export class SQLiteDatabase {
       database.exec("PRAGMA busy_timeout = 5000;");
       const runner = new MigrationRunner(database, this.options.migrations);
       this.schemaVersion = runner.run();
+      if (fileName !== ":memory:") await chmodExistingSqliteSidecars(fileName);
       this.connection = database;
       return this.schemaVersion;
     } catch (error) {
@@ -56,17 +59,34 @@ export class SQLiteDatabase {
 
   private resolveFileName(): string {
     if (this.options.fileName === ":memory:") return ":memory:";
-    const configured = this.options.fileName ?? process.env.TRADING_DB_FILE?.trim();
+    const configured = this.configuredFileName();
     return configured ? resolve(configured) : resolve(process.cwd(), "data/trading.sqlite3");
+  }
+
+  private hasCustomFileName(): boolean {
+    return Boolean(this.configuredFileName());
+  }
+
+  private configuredFileName(): string | undefined {
+    return this.options.fileName ?? process.env.TRADING_DB_FILE?.trim();
   }
 }
 
-async function preparePrivateDatabaseFile(fileName: string): Promise<void> {
+async function preparePrivateDatabaseFile(fileName: string, appManagedDirectory: boolean): Promise<void> {
   const directory = dirname(fileName);
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  await chmod(directory, 0o700).catch(() => undefined);
+  const createdDirectory = await mkdir(directory, { recursive: true, mode: 0o700 });
+  if (appManagedDirectory || createdDirectory) {
+    await chmod(directory, 0o700).catch(() => undefined);
+  }
 
   const handle = await open(fileName, "a", 0o600);
   await handle.close();
   await chmod(fileName, 0o600).catch(() => undefined);
+}
+
+async function chmodExistingSqliteSidecars(fileName: string): Promise<void> {
+  await Promise.all([
+    chmod(`${fileName}-wal`, 0o600).catch(() => undefined),
+    chmod(`${fileName}-shm`, 0o600).catch(() => undefined),
+  ]);
 }
