@@ -144,8 +144,13 @@ KCEX 账号密码登录
 TASK-004
 读取 GPS_USDT / 余额 / 杠杆 / 仓位
         ↓
-Paper Trading
+TASK-005
+Local SQLite Persistence
         ↓
+TASK-006
+Paper Trading Lifecycle
+        ↓
+TASK-007
 RiskEngine
         ↓
 受控真实交易
@@ -175,7 +180,7 @@ TASK-003 将认证提供方显式区分为 `AUTH_PROVIDER=FAKE` 与 `AUTH_PROVID
 
 ## TASK-004 Futures Read-Only State Extractor
 
-当前状态：IN PROGRESS。
+当前状态：COMPLETE。
 
 TASK-004 把已认证的 KCEX 页面作为一个受信任页面源，向同一个浏览器页面安装只读提取器：
 
@@ -196,6 +201,14 @@ local Dashboard
 提取器只读取 `GPS_USDT` 的显式页面字段：价格、可用 USDT、保证金模式、杠杆、当前仓位和挂单。数值解析严格失败关闭，缺失或格式错误的数据保持 `null`，不会用 `0` 猜测。`KCEX_READONLY_ENABLED` 默认关闭，轮询只在认证状态和受信页面同时满足时启动；会话丢失、挑战页或 symbol 不匹配会停止读取，不会自动登录或刷新。
 
 TASK-004 不包含下单、撤单、Long/Short 按钮、杠杆/保证金修改或真实 KCEX 验证。真实 DOM selector、登录 session 和 GPS_USDT 页面仍标记为 **DEFERRED MANUAL VERIFICATION**。CI 只使用 loopback fixture，并用网络 guard 拒绝意外公网请求。
+
+## TASK-005 Local SQLite Trading Persistence
+
+当前状态：REVIEW READY。
+
+TASK-005 建立本地 SQLite durable storage，用于保存未来上层提供的 trade records、trade lifecycle events、daily plans 和 runtime audit events，并向 Dashboard 提供只读 trade history 与 storage health。默认数据库为 `data/trading.sqlite3`，可通过 `TRADING_DB_FILE` 覆盖；数据库目录和文件权限 best-effort 收紧，数据库文件由 Git 忽略。
+
+TASK-005 不生成交易或计划，不执行 Paper Trade，不读取或保存市场 tick、KCEX credentials/session，也不保存 live-arm 状态。`LIVE_TRADING=false` 保持强制关闭。数据库验证只在 GitHub Actions Node 22 中运行。
 
 ## 推荐技术栈
 

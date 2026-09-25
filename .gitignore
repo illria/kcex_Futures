@@ -12,3 +12,9 @@ playwright-report/
 test-results/
 coverage/
 *.log
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm

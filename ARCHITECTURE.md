@@ -201,6 +201,39 @@ The frontend consumes these events to maintain the live dashboard.
 
 ## Key design decisions
 
+### Storage layer (TASK-005)
+
+Trading lifecycle services pass validated durable records to `StorageService`:
+
+```
+Trading services
+      ↓
+StorageService
+      ↓
+TradeRepository · DailyPlanRepository · AuditRepository
+      ↓
+Node.js node:sqlite / local SQLite
+```
+
+The SQLite layer owns versioned migrations, prepared statements, bounded reads,
+Zod validation before writes and after reads, append-only event APIs, and atomic
+trade transitions. The default database is `data/trading.sqlite3`; `TRADING_DB_FILE`
+may select another local path. Initialization and migrations complete before
+the HTTP server listens, and any initialization failure prevents server startup.
+Dashboard history reads are bounded and report storage as degraded if a runtime
+read fails.
+
+SQLite stores trade records, trade lifecycle events, daily plan records, and
+runtime audit events only. It does not store credentials, account/password data,
+OTP values, cookies, tokens, encrypted or plaintext browser sessions, storage
+state, KCEX snapshots, or market time series. Credentials and sessions remain
+owned by the encrypted vault/session store. Live-arm state is runtime-only and
+is never persisted; process startup always forces `LIVE_TRADING=false`.
+
+TASK-005 exposes only read APIs to the Dashboard. It does not create trades,
+generate plans, execute a Paper Trade lifecycle, submit or cancel KCEX orders,
+or modify positions, leverage, or margin mode.
+
 ### 1. KCEX adapter layer
 
 All page-specific selectors and interaction logic must live under the KCEX adapter.

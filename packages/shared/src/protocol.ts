@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { StorageStatusSchema, TradeHistoryEntrySchema } from "./storage.js";
 
 export const MASTER_KEY_MIN_LENGTH = 12;
 
@@ -206,6 +207,7 @@ export const DashboardSnapshotSchema = z
         killSwitch: z.literal("NORMAL"),
         readOnlyEnabled: z.boolean(),
         readHealth: ReadHealthSchema,
+        storage: StorageStatusSchema,
       })
       .strict(),
     liveTrading: z.literal(false),
@@ -216,7 +218,7 @@ export const DashboardSnapshotSchema = z
     position: PositionSnapshotSchema,
     openOrders: OpenOrdersSnapshotSchema,
     scheduler: SchedulerPlanSchema,
-    history: z.array(z.never()),
+    history: z.array(TradeHistoryEntrySchema).max(100),
     logs: z.array(RuntimeLogSchema).max(100),
   })
   .strict()
