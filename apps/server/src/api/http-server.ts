@@ -385,7 +385,7 @@ function initialEvents(authState: AuthState, startedAt: number, futuresRead?: Fu
   const snapshot = latest
     ? createDashboardSnapshot(authState.status === "AUTHENTICATED", latest, now, true, readState?.browserStatus)
     : createFakeDashboardSnapshot(authState.status === "AUTHENTICATED", now);
-  const canSendFinancial = !isKcex || (authState.status === "AUTHENTICATED" && latest !== null);
+  const canSendFinancial = !isKcex || (authState.status === "AUTHENTICATED" && latest != null);
   const proposed: unknown[] = [
     { version: 1, type: "auth.state", timestamp: now, payload: authState },
   ];
