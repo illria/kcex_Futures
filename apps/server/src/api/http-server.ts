@@ -16,10 +16,15 @@ import {
   type AuthState,
   type DashboardEvent,
 } from "../../../../packages/shared/src/protocol.js";
+import {
+  StorageHealthSchema,
+  TradeHistoryResponseSchema,
+} from "../../../../packages/shared/src/storage.js";
 import { AuthService } from "../auth/auth-service.js";
 import { EventBus } from "../realtime/event-bus.js";
 import { EncryptedCredentialVault, VaultLockedError, VaultUnlockError } from "../vault/encrypted-vault.js";
 import type { FuturesReadService } from "../futures/futures-read-service.js";
+import type { StorageService } from "../storage/storage-service.js";
 
 const UnlockInputSchema = z.object({
   masterKey: z.string().min(MASTER_KEY_MIN_LENGTH).max(4096),
@@ -38,6 +43,7 @@ export interface DashboardServerOptions {
   staticRoot?: string;
   startedAt?: number;
   futuresRead?: FuturesReadService;
+  storage?: StorageService;
 }
 
 class HttpError extends Error {
@@ -170,6 +176,7 @@ async function handleApiRequest(
   auth: AuthService,
   vault: EncryptedCredentialVault,
   futuresRead: FuturesReadService | undefined,
+  storage: StorageService | undefined,
 ): Promise<boolean> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "127.0.0.1"}`);
   const method = request.method ?? "GET";
@@ -231,13 +238,37 @@ async function handleApiRequest(
     const readState = futuresRead?.getReadState();
     const latest = liveLatest
       ?? (state.authProvider === "KCEX" ? createUnavailableFuturesSnapshot() : createFakeFuturesSnapshot());
+    let history: z.infer<typeof TradeHistoryResponseSchema>["trades"] = [];
+    let storageStatus: "READY" | "DEGRADED" = "DEGRADED";
+    let storageFailed = false;
+    try {
+      if (storage?.isReady) {
+        history = storage.getRecentTradeHistory(50);
+        storageStatus = storage.getHealth().status;
+      } else {
+        storageFailed = true;
+      }
+    } catch {
+      storageFailed = true;
+    }
     const snapshot = createDashboardSnapshot(
       state.status === "AUTHENTICATED",
       latest,
       new Date().toISOString(),
       futuresRead?.enabled ?? false,
       futuresRead?.getBrowserStatus() ?? (state.authProvider === "KCEX" ? "NOT_STARTED" : undefined),
+      storageStatus,
     );
+    snapshot.history = history;
+    if (storageFailed) {
+      snapshot.status.storage = "DEGRADED";
+      snapshot.logs = [{
+        id: "storage-degraded",
+        level: "warn",
+        message: "Trade history storage is temporarily unavailable.",
+        timestamp: snapshot.logs[0]?.timestamp ?? new Date().toISOString(),
+      }, ...snapshot.logs].slice(0, 100);
+    }
     if (state.authProvider === "KCEX") {
       snapshot.status.kcex = state.status === "AUTHENTICATED" ? "KCEX_AUTHENTICATED" : "LOGIN_REQUIRED";
       snapshot.status.readHealth = readState?.health ?? "UNKNOWN";
@@ -252,6 +283,30 @@ async function handleApiRequest(
       }
     }
     sendJson(response, 200, snapshot);
+    return true;
+  }
+
+  if (method === "GET" && url.pathname === "/api/v1/history/trades") {
+    const limitValues = url.searchParams.getAll("limit");
+    if (limitValues.length > 1) throw new HttpError(400, "Invalid limit.");
+    const parsedLimit = z.coerce.number().int().min(1).max(100).safeParse(limitValues[0] ?? "50");
+    if (!parsedLimit.success) throw new HttpError(400, "Invalid limit.");
+    if (!storage?.isReady) throw new HttpError(503, "Trade history storage is unavailable.");
+    try {
+      sendJson(response, 200, TradeHistoryResponseSchema.parse({ trades: storage.getRecentTradeHistory(parsedLimit.data) }));
+    } catch {
+      throw new HttpError(503, "Trade history storage is unavailable.");
+    }
+    return true;
+  }
+
+  if (method === "GET" && url.pathname === "/api/v1/storage/health") {
+    try {
+      const health = storage?.getHealth() ?? { status: "DEGRADED" as const, schemaVersion: null };
+      sendJson(response, 200, StorageHealthSchema.parse(health));
+    } catch {
+      sendJson(response, 200, StorageHealthSchema.parse({ status: "DEGRADED", schemaVersion: null }));
+    }
     return true;
   }
 
@@ -454,7 +509,7 @@ export function createDashboardServer(options: DashboardServerOptions): Server {
     void (async () => {
       try {
         const loopbackHost = requireLoopbackHost(request);
-        const handled = await handleApiRequest(request, response, options.auth, options.vault, options.futuresRead);
+        const handled = await handleApiRequest(request, response, options.auth, options.vault, options.futuresRead, options.storage);
         if (!handled) await serveStatic(request, response, options.staticRoot, loopbackHost);
         if (!handled && !response.writableEnded) sendJson(response, 404, { error: "Not found." });
       } catch (error) {

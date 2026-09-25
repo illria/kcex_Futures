@@ -4,142 +4,80 @@
 
 All automated validation runs in GitHub Actions.
 
-The coding agent must not run install, build, typecheck, tests, Playwright, or KCEX automation on the user's machine unless the user explicitly changes this policy.
+The coding agent must not run install, build, typecheck, tests, Playwright, SQLite,
+or KCEX automation on the user's machine unless the user explicitly changes this
+policy.
 
-Authenticated live-browser verification is tracked separately as deferred manual verification.
+Authenticated live-browser verification is tracked separately as deferred manual
+verification.
 
-## Phase 0 — Bootstrap
+## Completed foundation — TASK-001 through TASK-004
 
-- TypeScript project
-- Playwright
-- Vitest
-- Zod
-- Pino
-- SQLite dependency
-- lint/typecheck/test scripts
-- GitHub Actions CI
-- local runtime directories ignored by git
+- local Dashboard and encrypted credential/session vault
+- Fake Auth and OTP fixtures
+- KCEX authentication adapter and fixture browser tests
+- GPS_USDT read-only page state extractor
+- `LIVE_TRADING=false` and fixture-only CI safety defaults
+
+Real KCEX DOM, authenticated session, and account verification remain deferred.
+
+## Phase 1 — TASK-005: Local SQLite Trading Persistence (in progress)
+
+- built-in Node.js `node:sqlite` storage
+- versioned migrations and bounded repositories
+- trade records, lifecycle event storage, daily plans, and audit events
+- read-only history and storage health APIs
+- no market snapshot time series and no trade generation/execution
 
 Exit criteria:
-- GitHub Actions dependency install succeeds
-- GitHub Actions typecheck succeeds
-- GitHub Actions tests succeed
-- no local development command was executed
+- migrations, repository validation, transaction rollback, secret rejection,
+  and temp-file reopen tests pass in GitHub Actions
+- Dashboard history comes only from stored records
+- all CI jobs pass with `LIVE_TRADING=false`
 
-## Phase 1 — Task 001: browser architecture + read-only KCEX detection
+## Phase 2 — TASK-006: Paper Trading Lifecycle (planned)
 
-- implement persistent-browser launcher
-- implement KCEX URL/navigation adapter
-- implement login-state classifier
-- implement GPS_USDT page classifier
-- use fixture/mock DOM tests
-- keep live trading OFF
-- defer real authenticated browser verification
+- deterministic lifecycle driven only by an explicit future upper-layer input
+- paper-only positions and simulated outcomes
+- lifecycle transitions persisted through TASK-005 repositories
+- deterministic fixtures and restart/recovery coverage in CI
 
-No trading interaction.
+No KCEX order submission or real position mutation.
 
-## Phase 2 — page state extraction
+## Phase 3 — TASK-007: RiskEngine + Kill Switch (planned)
 
-Read and normalize:
+- symbol whitelist and bounded margin/leverage rules
+- open-position, daily-count, failure, and loss limits
+- kill-switch behavior and pure rule tests
+- unknown state fails closed
 
-- current symbol
-- visible mark/last price
-- available balance
-- leverage
-- isolated/cross mode
-- current position
-- active orders
+## Phase 4 — TASK-008: Assisted Single Live Order Flow (planned)
 
-Build fixture-based selector diagnostics first. Real authenticated verification remains a separate user-approved step.
+Only after explicit user approval and review of earlier tasks. This phase requires
+a separate safety review and later manual verification. It is not part of TASK-005.
 
-## Phase 3 — paper engine
+## Phase 5 — TASK-009: Position Confirmation + UNKNOWN State (planned)
 
-- deterministic fake order lifecycle
-- long/short paper positions
-- simulated TP/SL
-- persistence
-- restart recovery
-- at least 1000 lifecycle simulations in CI
+- verify outcomes from explicit page evidence
+- preserve UNKNOWN on uncertain outcomes
+- block unsafe retries
 
-## Phase 4 — risk engine
+## Phase 6 — TASK-010: TP/SL Management (planned)
 
-Rules:
+- handle protection only after a position is confirmed
+- distinguish price percentage from ROI percentage
 
-- symbol whitelist
-- max margin per trade
-- max leverage
-- max open positions
-- max trades per day
-- minimum interval
-- max consecutive failures
-- daily loss cap
-- kill switch
+## Phase 7 — TASK-011: Daily Scheduler (planned)
 
-All pure risk behavior must be exhaustively testable in CI.
+- create bounded daily plans with deterministic test clocks
+- enforce spacing, position checks, and daily limits
+- persist plan data with TASK-005 repositories
 
-## Phase 5 — one-shot assisted live order
+## Phase 8 — TASK-012: Long-Running Resilience (planned)
 
-Only after explicit user approval and after the earlier phases are reviewed.
+- auth-loss and stale-page detection
+- selector drift diagnostics and controlled recovery
+- heartbeat and structured audit logging
 
-- set isolated
-- set leverage
-- fill fixed margin
-- choose side
-- final re-read validation
-- human confirmation
-- submit once
-- no retry on uncertain result
-
-This phase inherently requires a later real-machine manual verification step; it is not executed by GitHub Actions.
-
-## Phase 6 — position confirmation
-
-- detect actual opened position
-- record entry
-- record quantity
-- record side
-- record status
-- screenshot before and after
-- UNKNOWN handling
-
-## Phase 7 — TP/SL
-
-Prefer KCEX-native TP/SL once a position is confirmed.
-
-Must distinguish:
-- price percentage
-- ROI percentage
-
-## Phase 8 — daily random scheduler
-
-- choose random count in configured range
-- choose random times
-- enforce minimum spacing
-- skip if an existing position is open
-- persist daily plan
-- regenerate next day
-
-Scheduler logic must be CI-testable with deterministic seeded/controlled clocks where appropriate.
-
-## Phase 9 — unattended hardening
-
-- auth-loss detection
-- popup handling
-- stale-page detection
-- selector drift diagnostics
-- controlled restart
-- heartbeat
-- structured logging
-
-## Phase 10 — optional local dashboard
-
-Only after execution stability.
-
-Possible views:
-- current status
-- today plan
-- trade history
-- position
-- logs
-- pause/resume
-- live mode status
+Every phase must pass its documented CI acceptance criteria before later work
+begins.

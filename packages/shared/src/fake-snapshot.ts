@@ -8,6 +8,7 @@ import type {
   PositionSnapshot,
 } from "./protocol.js";
 import type { BrowserStatus } from "./protocol.js";
+import type { StorageStatus } from "./storage.js";
 import { assertFuturesSourceConsistency } from "./futures-invariants.js";
 
 export function createFakeFuturesSnapshot(now = new Date().toISOString()): KcexFuturesSnapshot {
@@ -104,6 +105,7 @@ export function createDashboardSnapshot(
   now = new Date().toISOString(),
   readOnlyEnabled = false,
   browser: BrowserStatus = authenticated ? "AUTHENTICATED" : "NOT_STARTED",
+  storageStatus: StorageStatus = "DEGRADED",
 ): DashboardSnapshot {
   assertFuturesSourceConsistency(futures);
   return {
@@ -115,6 +117,7 @@ export function createDashboardSnapshot(
       killSwitch: "NORMAL",
       readOnlyEnabled,
       readHealth: futures.health,
+      storage: storageStatus,
     },
     liveTrading: false,
     futures,

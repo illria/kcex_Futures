@@ -139,6 +139,7 @@ export function DashboardView({
         <StatusTile label="Kill Switch" value={snapshot.status.killSwitch} />
         <StatusTile label="Read Health" value={snapshot.status.readHealth} />
         <StatusTile label="Freshness" value={futures.freshness} />
+        <StatusTile label="Storage" value={snapshot.status.storage} />
       </section>
 
       <div className="stream-state" role="status">
@@ -221,8 +222,46 @@ export function DashboardView({
       </section>
 
       <section className="panel">
-        <p className="eyebrow">Trade History</p>
-        <p className="empty-state">No trade history. TASK-002 uses fixture data only.</p>
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">Trade History · Storage {snapshot.status.storage}</p>
+            <h2>Recent records</h2>
+          </div>
+        </div>
+        {snapshot.history.length === 0 ? (
+          <p className="empty-state">No trade history.</p>
+        ) : (
+          <div className="table-scroll">
+            <table className="trade-history-table">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Mode</th>
+                  <th>Side</th>
+                  <th>Status</th>
+                  <th>Entry</th>
+                  <th>Exit</th>
+                  <th>PnL</th>
+                  <th>Fees</th>
+                </tr>
+              </thead>
+              <tbody>
+                {snapshot.history.map((trade) => (
+                  <tr key={trade.id}>
+                    <td><time dateTime={trade.createdAt}>{new Date(trade.createdAt).toLocaleString()}</time></td>
+                    <td>{trade.mode}</td>
+                    <td>{trade.side}</td>
+                    <td>{trade.status}</td>
+                    <td>{formatHistoryNumber(trade.entryPrice)}</td>
+                    <td>{formatHistoryNumber(trade.exitPrice)}</td>
+                    <td>{formatHistoryMoney(trade.realizedPnl)}</td>
+                    <td>{formatHistoryMoney(trade.fees)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
       <section className="panel">
@@ -260,6 +299,14 @@ function Metric({ label, value, suffix }: { label: string; value: string; suffix
       {suffix ? <small>{suffix}</small> : null}
     </div>
   );
+}
+
+function formatHistoryNumber(value: number | null): string {
+  return value === null ? "—" : value.toFixed(5);
+}
+
+function formatHistoryMoney(value: number | null): string {
+  return value === null ? "—" : `${value.toFixed(2)} USDT`;
 }
 
 export function AuthPanel({
