@@ -74,6 +74,10 @@ export interface PaperTradingServiceOptions {
 }
 
 type Clock = () => Date;
+type PaperStateEventInput = Omit<Extract<DashboardEvent, { type: "paper.state" }>, "version" | "timestamp">;
+type PaperOpenedEventInput = Omit<Extract<DashboardEvent, { type: "trade.opened" }>, "version" | "timestamp">;
+type PaperClosedEventInput = Omit<Extract<DashboardEvent, { type: "trade.closed" }>, "version" | "timestamp">;
+type PaperEventInput = PaperStateEventInput | PaperOpenedEventInput | PaperClosedEventInput;
 
 export class PaperTradingService {
   private readonly clock: Clock;
@@ -442,7 +446,7 @@ export class PaperTradingService {
     this.publish({ type: "paper.state", payload: this.getState() });
   }
 
-  private publish(event: Extract<DashboardEvent, { type: "paper.state" | "trade.opened" | "trade.closed" }>): void {
+  private publish(event: PaperEventInput): void {
     this.options.events.publish({ version: 1, timestamp: this.timestamp(), ...event });
   }
 
