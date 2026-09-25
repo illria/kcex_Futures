@@ -227,7 +227,9 @@ async function handleApiRequest(
 
   if (method === "GET" && url.pathname === "/api/v1/dashboard/snapshot") {
     const state = auth.getState();
-    const latest = futuresRead?.getLatestSnapshot()
+    const liveLatest = futuresRead?.getLatestSnapshot();
+    const readState = futuresRead?.getReadState();
+    const latest = liveLatest
       ?? (state.authProvider === "KCEX" ? createUnavailableFuturesSnapshot() : createFakeFuturesSnapshot());
     const snapshot = createDashboardSnapshot(
       state.status === "AUTHENTICATED",
@@ -238,8 +240,8 @@ async function handleApiRequest(
     );
     if (state.authProvider === "KCEX") {
       snapshot.status.kcex = state.status === "AUTHENTICATED" ? "KCEX_AUTHENTICATED" : "LOGIN_REQUIRED";
-      const liveLatest = futuresRead?.getLatestSnapshot();
-      snapshot.status.readHealth = liveLatest?.health ?? "UNKNOWN";
+      snapshot.status.readHealth = readState?.health ?? "UNKNOWN";
+      if (readState) snapshot.status.browser = readState.browserStatus;
       if (!liveLatest) {
         snapshot.logs = [{
           id: "kcex-read-waiting",
@@ -378,23 +380,19 @@ function dashboardContentSecurityPolicy(loopbackHost: string): string {
 function initialEvents(authState: AuthState, startedAt: number, futuresRead?: FuturesReadService): DashboardEvent[] {
   const now = new Date().toISOString();
   const latest = futuresRead?.getLatestSnapshot();
+  const readState = futuresRead?.getReadState();
   const isKcex = authState.authProvider === "KCEX";
   const snapshot = latest
-    ? createDashboardSnapshot(authState.status === "AUTHENTICATED", latest, now, true, futuresRead?.getBrowserStatus())
+    ? createDashboardSnapshot(authState.status === "AUTHENTICATED", latest, now, true, readState?.browserStatus)
     : createFakeDashboardSnapshot(authState.status === "AUTHENTICATED", now);
   const proposed: unknown[] = [
     { version: 1, type: "auth.state", timestamp: now, payload: authState },
-    { version: 1, type: "scheduler.plan", timestamp: now, payload: snapshot.scheduler },
-    { version: 1, type: "system.log", timestamp: now, payload: snapshot.logs[0] },
-    {
-      version: 1,
-      type: "system.heartbeat",
-      timestamp: now,
-      payload: { status: "OK", liveTrading: false, uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000) },
-    },
   ];
   if (!isKcex || latest) {
-    proposed.splice(1, 0,
+    if (isKcex && latest) {
+      proposed.push({ version: 1, type: "futures.snapshot", timestamp: now, payload: latest });
+    }
+    proposed.push(
       { version: 1, type: "market.snapshot", timestamp: now, payload: snapshot.market },
       {
         version: 1,
@@ -412,7 +410,7 @@ function initialEvents(authState: AuthState, startedAt: number, futuresRead?: Fu
     );
   }
   if (isKcex && latest) {
-    proposed.splice(4, 0,
+    proposed.push(
       { version: 1, type: "futures.contract", timestamp: now, payload: snapshot.contract },
       { version: 1, type: "orders.snapshot", timestamp: now, payload: snapshot.openOrders },
       {
@@ -421,15 +419,25 @@ function initialEvents(authState: AuthState, startedAt: number, futuresRead?: Fu
         timestamp: now,
         payload: {
           symbol: "GPS_USDT",
-          status: latest.status,
-          health: latest.health,
+          status: readState?.status ?? latest.status,
+          health: readState?.health ?? latest.health,
           source: latest.source,
-          consecutiveReadFailures: 0,
-          updatedAt: latest.updatedAt,
+          consecutiveReadFailures: readState?.consecutiveReadFailures ?? 0,
+          updatedAt: readState?.updatedAt ?? latest.updatedAt,
         },
       },
     );
   }
+  proposed.push(
+    { version: 1, type: "scheduler.plan", timestamp: now, payload: snapshot.scheduler },
+    { version: 1, type: "system.log", timestamp: now, payload: snapshot.logs[0] },
+    {
+      version: 1,
+      type: "system.heartbeat",
+      timestamp: now,
+      payload: { status: "OK", liveTrading: false, uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000) },
+    },
+  );
   return proposed.map(parseDashboardEvent);
 }
 

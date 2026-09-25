@@ -44,7 +44,9 @@ const unsubscribeAuthEvents = futuresRead
       return events.subscribe((event) => {
         if (event.type !== "auth.state") return;
         if (event.payload.status === "AUTHENTICATED") readService.start();
-        else readService.stop();
+        else if (event.payload.status === "AUTH_UNKNOWN") readService.stop("UNKNOWN");
+        else if (event.payload.status === "MANUAL_CHALLENGE") readService.stop("MANUAL_CHALLENGE");
+        else readService.stop("SESSION_LOST");
       });
     })()
   : undefined;

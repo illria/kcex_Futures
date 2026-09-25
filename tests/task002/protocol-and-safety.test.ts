@@ -21,6 +21,7 @@ describe("shared WebSocket event schemas", () => {
     const bus = new EventBus();
     const events: DashboardEvent[] = [
       { version: 1, type: "auth.state", timestamp, payload: auth },
+      { version: 1, type: "futures.snapshot", timestamp, payload: snapshot.futures },
       { version: 1, type: "market.snapshot", timestamp, payload: snapshot.market },
       { version: 1, type: "account.balance", timestamp, payload: { asset: "USDT", available: 1000, source: "MOCK" } },
       { version: 1, type: "position.changed", timestamp, payload: snapshot.position },
@@ -31,6 +32,7 @@ describe("shared WebSocket event schemas", () => {
 
     expect(events.map((event) => bus.publish(event).type)).toEqual([
       "auth.state",
+      "futures.snapshot",
       "market.snapshot",
       "account.balance",
       "position.changed",

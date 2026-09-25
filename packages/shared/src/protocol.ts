@@ -252,6 +252,7 @@ const AccountBalanceEventPayloadSchema = z
 
 export const DashboardEventSchema = z.discriminatedUnion("type", [
   z.object({ ...EventMetaSchema, type: z.literal("auth.state"), payload: AuthStateSchema }).strict(),
+  z.object({ ...EventMetaSchema, type: z.literal("futures.snapshot"), payload: KcexFuturesSnapshotSchema }).strict(),
   z.object({ ...EventMetaSchema, type: z.literal("market.snapshot"), payload: MarketSnapshotSchema }).strict(),
   z.object({ ...EventMetaSchema, type: z.literal("account.balance"), payload: AccountBalanceEventPayloadSchema }).strict(),
   z.object({ ...EventMetaSchema, type: z.literal("position.changed"), payload: PositionSnapshotSchema }).strict(),

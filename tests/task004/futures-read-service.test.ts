@@ -44,7 +44,7 @@ describe("FuturesReadService", () => {
     expect(calls).toBe(1);
     release?.();
     await first;
-    expect(seen).toEqual(expect.arrayContaining(["market.snapshot", "account.balance", "futures.contract", "position.changed", "orders.snapshot", "futures.read-health"]));
+    expect(seen).toEqual(expect.arrayContaining(["futures.snapshot", "market.snapshot", "account.balance", "futures.contract", "position.changed", "orders.snapshot", "futures.read-health"]));
   });
 
   it("reports browser runtime state and stales cached data after a stop", async () => {
@@ -87,6 +87,43 @@ describe("FuturesReadService", () => {
     result = "UNKNOWN";
     await service.pollOnce();
     expect(service.getBrowserStatus()).toBe("DEGRADED");
+  });
+
+  it("keeps reader health and failure count across reconnect state", async () => {
+    let readCount = 0;
+    const readTimestamp = new Date("2026-01-01T00:00:00.000Z");
+    const events = new EventBus();
+    const service = new FuturesReadService({
+      adapter: {
+        readSnapshot: async () => {
+          readCount += 1;
+          return readCount === 1
+            ? { status: "READY" as const, snapshot: createFakeFuturesSnapshot(readTimestamp.toISOString()) }
+            : { status: "UNKNOWN" as const, reason: "fixture evidence unavailable" };
+        },
+      },
+      events,
+      logger: silentLogger,
+      authStatus: () => "AUTHENTICATED",
+      enabled: true,
+      pollMs: 5000,
+      now: () => readTimestamp,
+    });
+
+    await service.pollOnce();
+    const originalUpdatedAt = service.getLatestSnapshot(readTimestamp)?.updatedAt;
+    await service.pollOnce();
+    await service.pollOnce();
+
+    expect(service.getReadState()).toEqual({
+      status: "UNKNOWN",
+      health: "UNKNOWN",
+      browserStatus: "DEGRADED",
+      consecutiveReadFailures: 2,
+      updatedAt: readTimestamp.toISOString(),
+    });
+    expect(service.getLatestSnapshot(readTimestamp)?.updatedAt).toBe(originalUpdatedAt);
+    expect(service.getLatestSnapshot(readTimestamp)?.freshness).toBe("STALE");
   });
 
   it.each(["SESSION_LOST", "SYMBOL_MISMATCH", "MANUAL_CHALLENGE"] as const)("stops polling on %s", async (terminalStatus) => {

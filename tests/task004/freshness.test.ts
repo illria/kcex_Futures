@@ -7,10 +7,11 @@ describe("read-only snapshot freshness and source invariants", () => {
   const updatedAt = "2026-01-01T00:00:00.000Z";
   const snapshot = createFakeFuturesSnapshot(updatedAt);
 
-  it("keeps data fresh through the threshold and marks older data stale", () => {
+  it("keeps data fresh below the threshold and marks the boundary stale", () => {
     expect(applySnapshotFreshness(snapshot, new Date(updatedAt).getTime() + 5_000).freshness).toBe("FRESH");
     expect(applySnapshotFreshness(snapshot, new Date(updatedAt).getTime() + 14_900).freshness).toBe("FRESH");
-    expect(applySnapshotFreshness(snapshot, new Date(updatedAt).getTime() + KCEX_READ_STALE_MS).freshness).toBe("FRESH");
+    expect(applySnapshotFreshness(snapshot, new Date(updatedAt).getTime() + KCEX_READ_STALE_MS - 1).freshness).toBe("FRESH");
+    expect(applySnapshotFreshness(snapshot, new Date(updatedAt).getTime() + KCEX_READ_STALE_MS).freshness).toBe("STALE");
     expect(applySnapshotFreshness(snapshot, new Date(updatedAt).getTime() + KCEX_READ_STALE_MS + 1).freshness).toBe("STALE");
   });
 

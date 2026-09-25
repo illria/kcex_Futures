@@ -5,8 +5,8 @@ import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createFakeDashboardSnapshot } from "../../packages/shared/src/fake-snapshot.js";
-import { AuthStateSchema } from "../../packages/shared/src/protocol.js";
-import { AuthPanel, DashboardView } from "../../apps/web/src/App";
+import { AuthStateSchema, DashboardSnapshotSchema } from "../../packages/shared/src/protocol.js";
+import { applyFuturesSnapshotToDashboard, AuthPanel, DashboardView } from "../../apps/web/src/App";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -71,6 +71,48 @@ describe("mock dashboard rendering", () => {
     expect(render("READY")).toContain("No open orders were observed.");
     expect(render("UNKNOWN")).toContain("Open orders unavailable.");
     expect(render("PARTIAL")).toContain("Open orders partially available.");
+  });
+
+  it("atomically transitions the dashboard from MOCK to a KCEX read-only snapshot", () => {
+    const timestamp = new Date(0).toISOString();
+    const mock = createFakeDashboardSnapshot(true, timestamp);
+    const kcex = {
+      ...mock.futures,
+      source: "KCEX" as const,
+      market: { ...mock.futures.market, source: "KCEX" as const },
+      account: { ...mock.futures.account, source: "KCEX" as const },
+      contract: { ...mock.futures.contract, source: "KCEX" as const },
+      position: { ...mock.futures.position, source: "KCEX" as const },
+      openOrders: {
+        ...mock.futures.openOrders,
+        source: "KCEX" as const,
+        orders: mock.futures.openOrders.orders.map((order) => ({ ...order, source: "KCEX" as const })),
+      },
+    };
+    const transitioned = applyFuturesSnapshotToDashboard(mock, kcex);
+    expect(() => DashboardSnapshotSchema.parse(transitioned)).not.toThrow();
+    expect(transitioned.futures.source).toBe("KCEX");
+    expect(transitioned.market.source).toBe("KCEX");
+    expect(transitioned.account.source).toBe("KCEX");
+    expect(transitioned.contract.source).toBe("KCEX");
+    expect(transitioned.position.source).toBe("KCEX");
+    expect(transitioned.openOrders.source).toBe("KCEX");
+
+    const auth = AuthStateSchema.parse({
+      status: "AUTHENTICATED",
+      credentialsSaved: false,
+      liveTrading: false,
+      authProvider: "KCEX",
+      updatedAt: timestamp,
+    });
+    const html = renderToStaticMarkup(React.createElement(DashboardView, {
+      snapshot: transitioned,
+      auth,
+      webSocketConnected: true,
+    }));
+    expect(html).toContain("LIVE READ-ONLY");
+    expect(html).toContain("Freshness");
+    expect(html).not.toContain(">FIXTURE<");
   });
 });
 

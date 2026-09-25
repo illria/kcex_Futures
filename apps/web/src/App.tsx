@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { createRoot } from "react-dom/client";
 import { FAKE_OTP_CODE } from "../../../packages/shared/src/fake-auth.js";
 import { createFakeDashboardSnapshot } from "../../../packages/shared/src/fake-snapshot.js";
+import { applySnapshotFreshness } from "../../../packages/shared/src/freshness.js";
 import {
   AuthStateSchema,
   DashboardSnapshotSchema,
@@ -11,6 +12,7 @@ import {
   type DashboardEvent,
   type DashboardSnapshot,
   type FuturesReadStatus,
+  type KcexFuturesSnapshot,
 } from "../../../packages/shared/src/protocol.js";
 
 interface ApiError extends Error {
@@ -21,6 +23,26 @@ function browserStatusForReadHealth(status: FuturesReadStatus): "READING" | "DEG
   if (status === "READY") return "READING";
   if (status === "PARTIAL" || status === "UNKNOWN") return "DEGRADED";
   return "STOPPED";
+}
+
+/**
+ * Apply the complete reader event as one dashboard state transition. Keeping
+ * the child snapshots together prevents a first KCEX event from leaving a
+ * MOCK parent with KCEX financial children.
+ */
+export function applyFuturesSnapshotToDashboard(
+  current: DashboardSnapshot,
+  futures: KcexFuturesSnapshot,
+): DashboardSnapshot {
+  return DashboardSnapshotSchema.parse({
+    ...current,
+    futures,
+    market: futures.market,
+    account: futures.account,
+    contract: futures.contract,
+    position: futures.position,
+    openOrders: futures.openOrders,
+  });
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -63,7 +85,15 @@ export function DashboardView({
   auth: AuthState;
   webSocketConnected: boolean;
 }) {
-  const futures = snapshot.futures;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const futures = applySnapshotFreshness(snapshot.futures, now, {
+    forceStale: snapshot.status.browser === "DEGRADED" || snapshot.status.browser === "STOPPED",
+  });
   const sourceLabel = futures.source === "KCEX" ? "LIVE READ-ONLY" : "FIXTURE";
   const formatNumber = (value: number | null, digits = 5): string => value === null ? "—" : value.toFixed(digits);
   const formatSigned = (value: number | null): string => value === null ? "—" : `${value.toFixed(2)} USDT`;
@@ -79,6 +109,7 @@ export function DashboardView({
         <StatusTile label="Trading" value={snapshot.status.trading} />
         <StatusTile label="Kill Switch" value={snapshot.status.killSwitch} />
         <StatusTile label="Read Health" value={snapshot.status.readHealth} />
+        <StatusTile label="Freshness" value={futures.freshness} />
       </section>
 
       <div className="stream-state" role="status">
@@ -538,20 +569,38 @@ export function App() {
           setAuth(event.payload);
           if (event.payload.status === "AUTHENTICATED") void refreshSnapshot();
         }
+        if (event.type === "futures.snapshot") {
+          setSnapshot((current) => {
+            const next = applyFuturesSnapshotToDashboard(current, event.payload);
+            return DashboardSnapshotSchema.parse({
+              ...next,
+              status: {
+                ...next.status,
+                kcex: "KCEX_AUTHENTICATED",
+                readOnlyEnabled: true,
+                browser: browserStatusForReadHealth(event.payload.status),
+                readHealth: event.payload.health,
+              },
+            });
+          });
+        }
         if (event.type === "market.snapshot") {
-          setSnapshot((current) => ({
-            ...current,
-            market: event.payload,
-            futures: {
-              ...current.futures,
+          setSnapshot((current) => {
+            if (event.payload.source !== current.futures.source) return current;
+            return DashboardSnapshotSchema.parse({
+              ...current,
               market: event.payload,
-              freshness: event.payload.freshness,
-              updatedAt: event.payload.updatedAt,
-            },
-          }));
+              futures: {
+                ...current.futures,
+                market: event.payload,
+                freshness: event.payload.freshness,
+              },
+            });
+          });
         }
         if (event.type === "account.balance") {
           setSnapshot((current) => {
+            if (event.payload.source !== current.futures.source) return current;
             const account = {
               ...current.account,
               availableUsdt: event.payload.available,
@@ -559,50 +608,60 @@ export function App() {
               updatedAt: event.payload.updatedAt ?? current.account.updatedAt,
               source: event.payload.source,
             };
-            return { ...current, account, futures: { ...current.futures, account, updatedAt: account.updatedAt } };
+            return DashboardSnapshotSchema.parse({ ...current, account, futures: { ...current.futures, account } });
           });
         }
         if (event.type === "position.changed") {
-          setSnapshot((current) => ({
-            ...current,
-            position: event.payload,
-            futures: {
-              ...current.futures,
+          setSnapshot((current) => {
+            if (event.payload.source !== current.futures.source) return current;
+            return DashboardSnapshotSchema.parse({
+              ...current,
               position: event.payload,
-              freshness: event.payload.freshness,
-              updatedAt: event.payload.updatedAt,
-            },
-          }));
+              futures: {
+                ...current.futures,
+                position: event.payload,
+                freshness: event.payload.freshness,
+              },
+            });
+          });
         }
         if (event.type === "futures.contract") {
-          setSnapshot((current) => ({
-            ...current,
-            contract: event.payload,
-            futures: { ...current.futures, contract: event.payload, updatedAt: event.payload.updatedAt },
-          }));
+          setSnapshot((current) => {
+            if (event.payload.source !== current.futures.source) return current;
+            return DashboardSnapshotSchema.parse({
+              ...current,
+              contract: event.payload,
+              futures: { ...current.futures, contract: event.payload },
+            });
+          });
         }
         if (event.type === "orders.snapshot") {
-          setSnapshot((current) => ({
-            ...current,
-            openOrders: event.payload,
-            futures: { ...current.futures, openOrders: event.payload, updatedAt: event.payload.updatedAt },
-          }));
+          setSnapshot((current) => {
+            if (event.payload.source !== current.futures.source) return current;
+            return DashboardSnapshotSchema.parse({
+              ...current,
+              openOrders: event.payload,
+              futures: { ...current.futures, openOrders: event.payload },
+            });
+          });
         }
         if (event.type === "futures.read-health") {
-          setSnapshot((current) => ({
-            ...current,
-            status: {
-              ...current.status,
-              readHealth: event.payload.health,
-              browser: browserStatusForReadHealth(event.payload.status),
-            },
-            futures: {
-              ...current.futures,
-              health: event.payload.health,
-              status: event.payload.status,
-              updatedAt: event.payload.updatedAt,
-            },
-          }));
+          setSnapshot((current) => {
+            if (event.payload.source !== current.futures.source) return current;
+            return DashboardSnapshotSchema.parse({
+              ...current,
+              status: {
+                ...current.status,
+                readHealth: event.payload.health,
+                browser: browserStatusForReadHealth(event.payload.status),
+              },
+              futures: {
+                ...current.futures,
+                health: event.payload.health,
+                status: event.payload.status,
+              },
+            });
+          });
         }
         if (event.type === "scheduler.plan") {
           setSnapshot((current) => ({ ...current, scheduler: event.payload }));

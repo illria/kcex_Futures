@@ -17,7 +17,7 @@ function calculateFreshness(updatedAt: string, now: Date | number | string, forc
   const nowMs = toTimestamp(now);
   if (!Number.isFinite(updatedAtMs) || !Number.isFinite(nowMs)) return "UNKNOWN";
   if (forceStale) return "STALE";
-  return nowMs - updatedAtMs <= KCEX_READ_STALE_MS ? "FRESH" : "STALE";
+  return nowMs - updatedAtMs < KCEX_READ_STALE_MS ? "FRESH" : "STALE";
 }
 
 /**

@@ -1,7 +1,13 @@
 import type { Logger } from "pino";
 import { applySnapshotFreshness } from "../../../../packages/shared/src/freshness.js";
 import { assertFuturesSourceConsistency } from "../../../../packages/shared/src/futures-invariants.js";
-import type { AuthStatus, BrowserStatus, KcexFuturesSnapshot } from "../../../../packages/shared/src/protocol.js";
+import type {
+  AuthStatus,
+  BrowserStatus,
+  FuturesReadStatus,
+  KcexFuturesSnapshot,
+  ReadHealth,
+} from "../../../../packages/shared/src/protocol.js";
 import { EventBus } from "../realtime/event-bus.js";
 import type { FuturesReadAdapter, FuturesSnapshotResult } from "./kcex-futures-read-adapter.js";
 
@@ -23,6 +29,20 @@ export interface FuturesReadServiceOptions {
   now?: () => Date;
 }
 
+export interface FuturesReadState {
+  status: FuturesReadStatus;
+  health: ReadHealth;
+  browserStatus: BrowserStatus;
+  consecutiveReadFailures: number;
+  updatedAt: string;
+}
+
+function readStatusForAuth(status: AuthStatus): FuturesReadStatus {
+  if (status === "MANUAL_CHALLENGE") return "MANUAL_CHALLENGE";
+  if (status === "AUTH_UNKNOWN") return "UNKNOWN";
+  return "SESSION_LOST";
+}
+
 export class FuturesReadService {
   private readonly intervalMs: number;
   private readonly now: () => Date;
@@ -33,10 +53,14 @@ export class FuturesReadService {
   private runtimeState: BrowserStatus = "NOT_STARTED";
   private forceLatestStale = false;
   private lifecycleGeneration = 0;
+  private lastReadStatus: FuturesReadStatus = "UNKNOWN";
+  private lastReadHealth: ReadHealth = "UNKNOWN";
+  private lastReadAttemptAt: string;
 
   constructor(private readonly options: FuturesReadServiceOptions) {
     this.intervalMs = normalizePollInterval(options.pollMs);
     this.now = options.now ?? (() => new Date());
+    this.lastReadAttemptAt = this.now().toISOString();
     this.runtimeState = options.enabled && options.authStatus() === "AUTHENTICATED"
       ? "AUTHENTICATED"
       : "NOT_STARTED";
@@ -52,6 +76,16 @@ export class FuturesReadService {
 
   getBrowserStatus(): BrowserStatus {
     return this.runtimeState;
+  }
+
+  getReadState(): FuturesReadState {
+    return {
+      status: this.lastReadStatus,
+      health: this.lastReadHealth,
+      browserStatus: this.runtimeState,
+      consecutiveReadFailures: this.consecutiveReadFailures,
+      updatedAt: this.lastReadAttemptAt,
+    };
   }
 
   getLatestSnapshot(now: Date | number | string = this.now()): KcexFuturesSnapshot | null {
@@ -73,8 +107,9 @@ export class FuturesReadService {
     this.timer.unref();
   }
 
-  stop(): void {
+  stop(status?: FuturesReadStatus): void {
     this.lifecycleGeneration += 1;
+    if (status) this.updateReadState(status, "UNKNOWN", this.now().toISOString());
     const wasRunning = this.timer !== null
       || this.runtimeState === "AUTHENTICATED"
       || this.runtimeState === "READING"
@@ -93,13 +128,21 @@ export class FuturesReadService {
   async pollOnce(): Promise<FuturesSnapshotResult | null> {
     if (!this.options.enabled || this.pollInProgress) return null;
     if (this.options.authStatus() !== "AUTHENTICATED") {
-      this.stop();
+      this.stop(readStatusForAuth(this.options.authStatus()));
       return null;
     }
     this.pollInProgress = true;
     const generation = this.lifecycleGeneration;
     try {
-      const adapterResult = await this.options.adapter.readSnapshot();
+      let adapterResult: FuturesSnapshotResult;
+      try {
+        adapterResult = await this.options.adapter.readSnapshot();
+      } catch (error) {
+        adapterResult = {
+          status: "UNKNOWN",
+          reason: error instanceof Error ? error.message : "Read-only futures read failed.",
+        };
+      }
       if (generation !== this.lifecycleGeneration || this.options.authStatus() !== "AUTHENTICATED") return null;
       let result = adapterResult;
       if (adapterResult.snapshot) {
@@ -118,7 +161,11 @@ export class FuturesReadService {
         this.publishSnapshot(result.snapshot);
       } else {
         this.consecutiveReadFailures += 1;
+        if (result.status === "UNKNOWN") this.forceLatestStale = this.latest !== null;
       }
+      const readHealth = result.snapshot?.health ?? "UNKNOWN";
+      const readStateUpdatedAt = this.now().toISOString();
+      this.updateReadState(result.status, readHealth, readStateUpdatedAt);
       const trustedHostFailure = /trusted KCEX host|official KCEX host|untrusted/i.test(result.reason ?? "");
       const terminal = result.status === "SESSION_LOST"
         || result.status === "SYMBOL_MISMATCH"
@@ -138,10 +185,10 @@ export class FuturesReadService {
         payload: {
           symbol: "GPS_USDT",
           status: result.status,
-          health: result.snapshot?.health ?? "UNKNOWN",
+          health: readHealth,
           source: result.snapshot?.source ?? "KCEX",
           consecutiveReadFailures: this.consecutiveReadFailures,
-          updatedAt: this.now().toISOString(),
+          updatedAt: readStateUpdatedAt,
         },
       });
       this.options.logger.info({
@@ -159,6 +206,7 @@ export class FuturesReadService {
 
   private publishSnapshot(snapshot: KcexFuturesSnapshot): void {
     const timestamp = this.now().toISOString();
+    this.options.events.publish({ version: 1, type: "futures.snapshot", timestamp, payload: snapshot });
     this.options.events.publish({ version: 1, type: "market.snapshot", timestamp, payload: snapshot.market });
     this.options.events.publish({
       version: 1,
@@ -175,5 +223,11 @@ export class FuturesReadService {
     this.options.events.publish({ version: 1, type: "futures.contract", timestamp, payload: snapshot.contract });
     this.options.events.publish({ version: 1, type: "position.changed", timestamp, payload: snapshot.position });
     this.options.events.publish({ version: 1, type: "orders.snapshot", timestamp, payload: snapshot.openOrders });
+  }
+
+  private updateReadState(status: FuturesReadStatus, health: ReadHealth, updatedAt: string): void {
+    this.lastReadStatus = status;
+    this.lastReadHealth = health;
+    this.lastReadAttemptAt = updatedAt;
   }
 }

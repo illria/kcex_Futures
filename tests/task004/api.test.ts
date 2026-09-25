@@ -129,7 +129,7 @@ describe("TASK-004 read-only API boundaries", () => {
         try {
           eventsSeen.push(parseDashboardEvent(JSON.parse(message.toString())));
           const types = new Set(eventsSeen.map((event) => event.type));
-          if ((["market.snapshot", "account.balance", "futures.contract", "position.changed", "orders.snapshot", "futures.read-health"] as const).every((type) => types.has(type))) {
+          if ((["futures.snapshot", "market.snapshot", "account.balance", "futures.contract", "position.changed", "orders.snapshot", "futures.read-health"] as const).every((type) => types.has(type))) {
             socket.close();
             resolve(eventsSeen);
           }
@@ -141,11 +141,107 @@ describe("TASK-004 read-only API boundaries", () => {
     });
 
     const financial = received.filter((event) => [
-      "market.snapshot", "account.balance", "futures.contract", "position.changed", "orders.snapshot", "futures.read-health",
+      "futures.snapshot", "market.snapshot", "account.balance", "futures.contract", "position.changed", "orders.snapshot", "futures.read-health",
     ].includes(event.type));
-    expect(financial).toHaveLength(6);
+    expect(financial).toHaveLength(7);
     expect(financial.every((event) => "source" in event.payload && event.payload.source === "KCEX")).toBe(true);
+    expect(received.find((event) => event.type === "futures.snapshot")?.payload.source).toBe("KCEX");
     expect(received.some((event) => event.type === "market.snapshot" && event.payload.source === "MOCK")).toBe(false);
+  });
+
+  it("uses the reader state on HTTP and WebSocket reconnects after failed reads", async () => {
+    let readCount = 0;
+    const updatedAt = "2026-01-01T00:00:00.000Z";
+    const service = new FuturesReadService({
+      adapter: {
+        readSnapshot: async () => {
+          readCount += 1;
+          return readCount === 1
+            ? { status: "READY" as const, snapshot: { ...kcexSnapshot(), updatedAt } }
+            : { status: "UNKNOWN" as const, reason: "fixture evidence unavailable" };
+        },
+      },
+      events: new EventBus(),
+      logger: { info: () => undefined } as never,
+      authStatus: () => "AUTHENTICATED",
+      enabled: true,
+      pollMs: 5000,
+      now: () => new Date("2026-01-01T00:00:01.000Z"),
+    });
+    await service.pollOnce();
+    await service.pollOnce();
+    await service.pollOnce();
+
+    const url = await startServer(authState("AUTHENTICATED"), service);
+    const dashboard = await (await fetch(`${url}/api/v1/dashboard/snapshot`)).json() as {
+      status: { readHealth: string; browser: string };
+      futures: { updatedAt: string; freshness: string; source: string };
+    };
+    expect(dashboard.status.readHealth).toBe("UNKNOWN");
+    expect(dashboard.status.browser).toBe("DEGRADED");
+    expect(dashboard.futures.source).toBe("KCEX");
+    expect(dashboard.futures.updatedAt).toBe(updatedAt);
+    expect(dashboard.futures.freshness).toBe("STALE");
+
+    const address = new URL(url);
+    const received = await new Promise<ReturnType<typeof parseDashboardEvent>[]>((resolve, reject) => {
+      const socket = new WebSocket(`ws://127.0.0.1:${address.port}/api/v1/events`, { headers: { origin: url } });
+      const eventsSeen: ReturnType<typeof parseDashboardEvent>[] = [];
+      socket.once("error", reject);
+      socket.on("message", (message) => {
+        try {
+          const event = parseDashboardEvent(JSON.parse(message.toString()));
+          eventsSeen.push(event);
+          if (event.type === "futures.read-health") {
+            socket.close();
+            resolve(eventsSeen);
+          }
+        } catch (error) {
+          socket.close();
+          reject(error);
+        }
+      });
+    });
+    const health = received.find((event) => event.type === "futures.read-health");
+    expect(health?.type).toBe("futures.read-health");
+    if (health?.type === "futures.read-health") {
+      expect(health.payload.status).toBe("UNKNOWN");
+      expect(health.payload.health).toBe("UNKNOWN");
+      expect(health.payload.consecutiveReadFailures).toBe(2);
+    }
+  });
+
+  it("preserves financial updatedAt and stales cached data after a terminal read", async () => {
+    const updatedAt = "2026-01-01T00:00:00.000Z";
+    let readCount = 0;
+    const service = new FuturesReadService({
+      adapter: {
+        readSnapshot: async () => {
+          readCount += 1;
+          return readCount === 1
+            ? { status: "READY" as const, snapshot: { ...kcexSnapshot(), updatedAt } }
+            : { status: "SESSION_LOST" as const };
+        },
+      },
+      events: new EventBus(),
+      logger: { info: () => undefined } as never,
+      authStatus: () => "AUTHENTICATED",
+      enabled: true,
+      pollMs: 5000,
+      now: () => new Date("2026-01-01T00:00:01.000Z"),
+    });
+    await service.pollOnce();
+    await service.pollOnce();
+
+    const url = await startServer(authState("AUTHENTICATED"), service);
+    const dashboard = await (await fetch(`${url}/api/v1/dashboard/snapshot`)).json() as {
+      status: { browser: string; readHealth: string };
+      futures: { updatedAt: string; freshness: string };
+    };
+    expect(dashboard.status.browser).toBe("STOPPED");
+    expect(dashboard.status.readHealth).toBe("UNKNOWN");
+    expect(dashboard.futures.updatedAt).toBe(updatedAt);
+    expect(dashboard.futures.freshness).toBe("STALE");
   });
 
   it("keeps FAKE fixture mode explicit", async () => {
