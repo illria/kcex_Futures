@@ -37,22 +37,31 @@ Spec: [docs/tasks/TASK-004.md](docs/tasks/TASK-004.md)
 - strict numeric parsing with null for missing or malformed evidence
 - fixture-only WebSocket and browser validation; no write-capable path
 
-## In Progress
-
 ### TASK-005 — Local SQLite Trading Persistence
 
-Status: REVIEW READY
+Status: COMPLETE
 
 Spec: [docs/tasks/TASK-005.md](docs/tasks/TASK-005.md)
 
 - versioned local SQLite schema and repositories for trades, daily plans, and audit events
 - read-only trade history and storage health APIs
 - persisted Dashboard history with no fabricated records
-- no paper lifecycle, scheduler, KCEX mutation, or live trading
+- no scheduler, KCEX mutation, or live trading
 
-## Planned
+## In Progress
 
 ### TASK-006 — Paper Trading Lifecycle
+
+Status: IN PROGRESS
+
+Spec: [docs/tasks/TASK-006.md](docs/tasks/TASK-006.md)
+
+- deterministic explicit plan/open/mark/close Paper lifecycle
+- atomic lifecycle events and restart recovery through TASK-005 storage
+- read-only Paper state API, WebSocket state, and separate Dashboard panel
+- no scheduler, KCEX mutation, or live trading
+
+## Planned
 
 ### TASK-007 — RiskEngine + Kill Switch
 

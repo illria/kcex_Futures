@@ -204,11 +204,19 @@ TASK-004 不包含下单、撤单、Long/Short 按钮、杠杆/保证金修改�
 
 ## TASK-005 Local SQLite Trading Persistence
 
-当前状态：REVIEW READY。
+当前状态：COMPLETE。
 
 TASK-005 建立本地 SQLite durable storage，用于保存未来上层提供的 trade records、trade lifecycle events、daily plans 和 runtime audit events，并向 Dashboard 提供只读 trade history 与 storage health。默认数据库为 `data/trading.sqlite3`，可通过 `TRADING_DB_FILE` 覆盖；数据库目录和文件权限 best-effort 收紧，数据库文件由 Git 忽略。
 
-TASK-005 不生成交易或计划，不执行 Paper Trade，不读取或保存市场 tick、KCEX credentials/session，也不保存 live-arm 状态。`LIVE_TRADING=false` 保持强制关闭。数据库验证只在 GitHub Actions Node 22 中运行。
+TASK-005 不生成交易或计划，不读取或保存市场 tick、KCEX credentials/session，也不保存 live-arm 状态。`LIVE_TRADING=false` 保持强制关闭。数据库验证只在 GitHub Actions Node 22 中运行。
+
+## TASK-006 Paper Trading Lifecycle
+
+当前状态：IN PROGRESS。
+
+TASK-006 在 TASK-005 SQLite records 上实现确定性的本地 Paper 生命周期。只有 server 内部显式调用才会 plan、open、mark 或 close；Paper Position 与 KCEX Read-Only Position 在 API、WebSocket 和 Dashboard 中分开显示。模拟费率由 `PAPER_FEE_RATE` 配置，默认 `0`，不代表 KCEX 实际费率。
+
+本阶段没有 scheduler、自动交易、自动平仓、TP/SL、爆仓或风险引擎，也不增加 Paper 写入 HTTP API。Paper 状态只用于本地模拟，绝不会创建 KCEX 请求或真实订单。`LIVE_TRADING=false` 持续强制关闭。
 
 ## 推荐技术栈
 

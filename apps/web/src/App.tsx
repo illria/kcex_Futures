@@ -13,6 +13,7 @@ import {
   type DashboardSnapshot,
   type KcexFuturesSnapshot,
 } from "../../../packages/shared/src/protocol.js";
+import type { PaperTradingState } from "../../../packages/shared/src/paper-trading.js";
 
 interface ApiError extends Error {
   status?: number;
@@ -57,6 +58,13 @@ export function applyReadHealthToDashboard(
       browser: payload.browserStatus,
     },
   });
+}
+
+export function applyPaperStateToDashboard(
+  current: DashboardSnapshot,
+  paper: PaperTradingState,
+): DashboardSnapshot {
+  return DashboardSnapshotSchema.parse({ ...current, paper });
 }
 
 /**
@@ -170,7 +178,7 @@ export function DashboardView({
       </section>
 
       <section className="panel">
-        <p className="eyebrow">Current Position · {futures.position.health} · {futures.position.freshness}</p>
+        <p className="eyebrow">KCEX Read-Only Position · {futures.position.health} · {futures.position.freshness}</p>
         <div className="metric-grid four">
           <Metric label="Side" value={futures.position.side} />
           <Metric label="Entry" value={formatNumber(futures.position.entryPrice)} />
@@ -178,6 +186,34 @@ export function DashboardView({
           <Metric label="Unrealized PnL" value={formatSigned(futures.position.unrealizedPnl)} />
         </div>
         <p className="muted-note">Read-only state; this dashboard never submits or manages orders.</p>
+      </section>
+
+      <section className="panel paper-panel" aria-label="Paper simulation state">
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">PAPER SIMULATION · NO KCEX ORDER</p>
+            <h2>Paper Trading</h2>
+          </div>
+          <span className="source-tag">{snapshot.paper.status}</span>
+        </div>
+        {snapshot.paper.status === "IDLE" ? (
+          <p className="empty-state">No open paper position.</p>
+        ) : snapshot.paper.status === "PLANNED" ? (
+          <p className="empty-state">A paper plan is waiting for an explicit internal open command.</p>
+        ) : snapshot.paper.status === "ERROR" ? (
+          <p className="empty-state" role="status">Paper lifecycle halted because persisted state needs review.</p>
+        ) : snapshot.paper.position ? (
+          <div className="metric-grid four">
+            <Metric label="Side" value={snapshot.paper.position.side} />
+            <Metric label="Margin" value={`${formatNumber(snapshot.paper.position.marginUsdt, 2)} USDT`} />
+            <Metric label="Leverage" value={`${formatNumber(snapshot.paper.position.leverage, 2)}x`} />
+            <Metric label="Entry Price" value={formatNumber(snapshot.paper.position.entryPrice)} />
+            <Metric label="Mark Price" value={formatNumber(snapshot.paper.position.markPrice)} />
+            <Metric label="Quantity" value={formatNumber(snapshot.paper.position.quantity, 3)} />
+            <Metric label="Unrealized PnL" value={formatSigned(snapshot.paper.position.unrealizedPnl)} />
+          </div>
+        ) : null}
+        <p className="muted-note">Deterministic local simulation only. This position is separate from KCEX read-only state.</p>
       </section>
 
       <section className="panel">
@@ -255,7 +291,10 @@ export function DashboardView({
                     <td>{formatHistoryNumber(trade.entryPrice)}</td>
                     <td>{formatHistoryNumber(trade.exitPrice)}</td>
                     <td>{formatHistoryMoney(trade.realizedPnl)}</td>
-                    <td>{formatHistoryMoney(trade.fees)}</td>
+                    <td>
+                      {formatHistoryMoney(trade.fees)}
+                      {trade.mode === "PAPER" ? <small className="fee-kind">Simulated Fees</small> : null}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -722,6 +761,12 @@ export function App() {
         }
         if (event.type === "futures.read-health") {
           setSnapshot((current) => applyReadHealthToDashboard(current, event.payload));
+        }
+        if (event.type === "paper.state") {
+          setSnapshot((current) => applyPaperStateToDashboard(current, event.payload));
+        }
+        if (event.type === "trade.opened" || event.type === "trade.closed") {
+          void refreshSnapshot();
         }
         if (event.type === "scheduler.plan") {
           setSnapshot((current) => ({ ...current, scheduler: event.payload }));

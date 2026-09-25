@@ -66,6 +66,7 @@ describe("Dashboard persisted trade history", () => {
     for (const label of ["Time", "Mode", "Side", "Status", "Entry", "Exit", "PnL", "Fees", "LIVE", "CLOSED", "3.25 USDT"]) {
       expect(html).toContain(label);
     }
+    expect(html).toContain("Simulated Fees");
     expect(html).toContain("Storage READY");
     expect(html).not.toContain("No trade history.");
   });

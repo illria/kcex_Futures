@@ -11,6 +11,7 @@ import { KcexFuturesReadAdapter } from "./futures/kcex-futures-read-adapter.js";
 import { FuturesReadService } from "./futures/futures-read-service.js";
 import { StorageService } from "./storage/storage-service.js";
 import { DatabaseSchemaTooNewError } from "./storage/storage-errors.js";
+import { PaperTradingService } from "./trading/paper-trading-service.js";
 import { logger } from "../../../src/logging/logger.js";
 import { loadConfig } from "../../../src/config/schema.js";
 
@@ -43,6 +44,16 @@ async function startServer(): Promise<void> {
     vault,
     process.env.SESSION_FILE?.trim() || resolve(process.cwd(), "data/kcex-session.enc.json"),
   );
+  const paperTrading = new PaperTradingService({
+    storage,
+    events,
+    feeRate: config.PAPER_FEE_RATE,
+  });
+  try {
+    await paperTrading.recover();
+  } catch {
+    logger.error({ errorCode: "PAPER_STATE_RECOVERY_CONFLICT" }, "Paper trading recovery halted safely.");
+  }
   const adapter = config.AUTH_PROVIDER === "KCEX"
     ? new KcexAuthAdapter({ baseUrl: config.KCEX_BASE_URL, headless: config.BROWSER_HEADLESS })
     : new FakeAuthAdapter();
@@ -77,6 +88,7 @@ async function startServer(): Promise<void> {
     startedAt,
     staticRoot: process.env.DASHBOARD_DEV === "true" ? undefined : resolveStaticRoot(),
     futuresRead,
+    paperTrading,
   });
 
   const heartbeat = setInterval(() => {
@@ -100,14 +112,17 @@ async function startServer(): Promise<void> {
     shuttingDown = true;
     clearInterval(heartbeat);
     unsubscribeAuthEvents?.();
-    futuresRead?.stop();
-    auth.close();
-    storage.close();
-    if (server.listening) {
-      server.close(() => {
-        logger.info({ liveTrading: false }, "Local dashboard server stopped.");
-      });
-    }
+    void (async () => {
+      await paperTrading.close();
+      futuresRead?.stop();
+      auth.close();
+      storage.close();
+      if (server.listening) {
+        server.close(() => {
+          logger.info({ liveTrading: false }, "Local dashboard server stopped.");
+        });
+      }
+    })();
   }
 
   server.on("error", (error: NodeJS.ErrnoException) => {

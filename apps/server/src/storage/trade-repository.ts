@@ -101,6 +101,26 @@ export class TradeRepository {
     return record;
   }
 
+  createTradeWithEvent(input: CreateTradeInput, event: Omit<TradeEventInput, "tradeId">): TradeRecord {
+    const validatedTrade = CreateTradeInputSchema.parse(input);
+    const id = validatedTrade.id ?? randomUUID();
+    const validatedEvent = TradeEventInputSchema.parse({ ...event, tradeId: id });
+    this.database.exec("BEGIN IMMEDIATE;");
+    try {
+      const record = this.createTrade({ ...validatedTrade, id });
+      this.appendTradeEvent(validatedEvent);
+      this.database.exec("COMMIT;");
+      return record;
+    } catch (error) {
+      try {
+        this.database.exec("ROLLBACK;");
+      } catch {
+        // Preserve the original plan creation error.
+      }
+      throw error;
+    }
+  }
+
   getTrade(id: string): TradeRecord | null {
     const row = this.database.prepare(`SELECT ${TRADE_COLUMNS} FROM trades WHERE id = ?`).get(id) as RawRow | undefined;
     return row ? parseTradeRow(row) : null;
@@ -119,6 +139,18 @@ export class TradeRepository {
       ORDER BY created_at DESC, id DESC
       LIMIT ?
     `).all(limit) as unknown as RawRow[];
+    return rows.map(parseTradeRow);
+  }
+
+  listOpenPaperTrades(options: { symbol: "GPS_USDT"; limit?: number }): TradeRecord[] {
+    const limit = parseLimit(options.limit, 2, 2);
+    const rows = this.database.prepare(`
+      SELECT ${TRADE_COLUMNS}
+      FROM trades
+      WHERE mode = 'PAPER' AND symbol = ? AND status = 'OPEN'
+      ORDER BY created_at DESC, id DESC
+      LIMIT ?
+    `).all(options.symbol, limit) as unknown as RawRow[];
     return rows.map(parseTradeRow);
   }
 
@@ -260,10 +292,10 @@ function parseTradeEventRow(row: RawRow): TradeEventRecord {
   return parsed.data;
 }
 
-function parseLimit(value: unknown, defaultValue: number): number {
+function parseLimit(value: unknown, defaultValue: number, maximum = 100): number {
   const limit = value === undefined ? defaultValue : value;
-  if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1 || limit > 100) {
-    throw new RangeError("List limit must be an integer from 1 to 100.");
+  if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1 || limit > maximum) {
+    throw new RangeError(`List limit must be an integer from 1 to ${maximum}.`);
   }
   return limit;
 }

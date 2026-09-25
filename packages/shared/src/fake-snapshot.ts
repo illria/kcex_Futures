@@ -10,6 +10,7 @@ import type {
 import type { BrowserStatus } from "./protocol.js";
 import type { StorageStatus } from "./storage.js";
 import { assertFuturesSourceConsistency } from "./futures-invariants.js";
+import { createIdlePaperTradingState } from "./paper-trading.js";
 
 export function createFakeFuturesSnapshot(now = new Date().toISOString()): KcexFuturesSnapshot {
   const market: MarketSnapshot = {
@@ -136,6 +137,7 @@ export function createDashboardSnapshot(
       leverage: 10,
       source: "MOCK",
     },
+    paper: createIdlePaperTradingState(now),
     history: [],
     logs: [
       {
