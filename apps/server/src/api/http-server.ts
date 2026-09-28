@@ -8,6 +8,7 @@ import {
   createDashboardSnapshot,
   createFakeDashboardSnapshot,
   createFakeFuturesSnapshot,
+  createRiskStatePlaceholder,
   createUnavailableFuturesSnapshot,
 } from "../../../../packages/shared/src/fake-snapshot.js";
 import {
@@ -22,12 +23,14 @@ import {
   TradeHistoryResponseSchema,
 } from "../../../../packages/shared/src/storage.js";
 import { createIdlePaperTradingState, PaperTradingStateSchema } from "../../../../packages/shared/src/paper-trading.js";
+import { RiskStateSchema } from "../../../../packages/shared/src/risk.js";
 import { AuthService } from "../auth/auth-service.js";
 import { EventBus } from "../realtime/event-bus.js";
 import { EncryptedCredentialVault, VaultLockedError, VaultUnlockError } from "../vault/encrypted-vault.js";
 import type { FuturesReadService } from "../futures/futures-read-service.js";
 import type { StorageService } from "../storage/storage-service.js";
 import type { PaperTradingService } from "../trading/paper-trading-service.js";
+import type { RiskService } from "../risk/risk-service.js";
 
 const UnlockInputSchema = z.object({
   masterKey: z.string().min(MASTER_KEY_MIN_LENGTH).max(4096),
@@ -48,6 +51,7 @@ export interface DashboardServerOptions {
   futuresRead?: FuturesReadService;
   storage?: StorageService;
   paperTrading?: PaperTradingService;
+  risk?: RiskService;
 }
 
 class HttpError extends Error {
@@ -182,6 +186,7 @@ async function handleApiRequest(
   futuresRead: FuturesReadService | undefined,
   storage: StorageService | undefined,
   paperTrading: PaperTradingService | undefined,
+  risk: RiskService | undefined,
 ): Promise<boolean> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "127.0.0.1"}`);
   const method = request.method ?? "GET";
@@ -191,6 +196,14 @@ async function handleApiRequest(
 
   if (method === "GET" && url.pathname === "/api/v1/auth/state") {
     sendJson(response, 200, auth.getState());
+    return true;
+  }
+
+  if (method === "GET" && url.pathname === "/api/v1/risk/state") {
+    const riskState = risk
+      ? await risk.refresh()
+      : createRiskStatePlaceholder(new Date().toISOString());
+    sendJson(response, 200, RiskStateSchema.parse(riskState));
     return true;
   }
 
@@ -265,8 +278,13 @@ async function handleApiRequest(
       futuresRead?.getBrowserStatus() ?? (state.authProvider === "KCEX" ? "NOT_STARTED" : undefined),
       storageStatus,
     );
+    const riskState = risk
+      ? await risk.refresh()
+      : createRiskStatePlaceholder(new Date().toISOString());
     const snapshot = DashboardSnapshotSchema.parse({
       ...baseSnapshot,
+      status: { ...baseSnapshot.status, killSwitch: riskState.killSwitch },
+      risk: riskState,
       paper: paperTrading?.getState() ?? createIdlePaperTradingState(new Date().toISOString()),
       history,
     });
@@ -454,6 +472,7 @@ function initialEvents(
   startedAt: number,
   futuresRead?: FuturesReadService,
   paperTrading?: PaperTradingService,
+  risk?: RiskService,
 ): DashboardEvent[] {
   const now = new Date().toISOString();
   const latest = futuresRead?.getLatestSnapshot();
@@ -465,6 +484,7 @@ function initialEvents(
   const canSendFinancial = !isKcex || (authState.status === "AUTHENTICATED" && latest != null);
   const proposed: unknown[] = [
     { version: 1, type: "auth.state", timestamp: now, payload: authState },
+    { version: 1, type: "risk.state", timestamp: now, payload: RiskStateSchema.parse(risk?.getState() ?? createRiskStatePlaceholder(now)) },
   ];
   if (canSendFinancial) {
     if (isKcex && latest) {
@@ -540,6 +560,7 @@ export function createDashboardServer(options: DashboardServerOptions): Server {
           options.futuresRead,
           options.storage,
           options.paperTrading,
+          options.risk,
         );
         if (!handled) await serveStatic(request, response, options.staticRoot, loopbackHost);
         if (!handled && !response.writableEnded) sendJson(response, 404, { error: "Not found." });
@@ -577,7 +598,7 @@ export function createDashboardServer(options: DashboardServerOptions): Server {
     const unsubscribe = options.events.subscribe((event) => {
       if (webSocket.readyState === WebSocket.OPEN) webSocket.send(JSON.stringify(event));
     });
-    for (const event of initialEvents(options.auth.getState(), startedAt, options.futuresRead, options.paperTrading)) {
+    for (const event of initialEvents(options.auth.getState(), startedAt, options.futuresRead, options.paperTrading, options.risk)) {
       webSocket.send(JSON.stringify(event));
     }
     webSocket.on("message", () => webSocket.close(1008, "Read-only event stream."));

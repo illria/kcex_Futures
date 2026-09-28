@@ -11,6 +11,7 @@ import type { BrowserStatus } from "./protocol.js";
 import type { StorageStatus } from "./storage.js";
 import { assertFuturesSourceConsistency } from "./futures-invariants.js";
 import { createIdlePaperTradingState } from "./paper-trading.js";
+import { DEFAULT_RISK_LIMITS, RiskStateSchema } from "./risk.js";
 
 export function createFakeFuturesSnapshot(now = new Date().toISOString()): KcexFuturesSnapshot {
   const market: MarketSnapshot = {
@@ -115,7 +116,7 @@ export function createDashboardSnapshot(
       browser,
       mode: "PAPER",
       trading: "PAUSED",
-      killSwitch: "NORMAL",
+      killSwitch: "CLEAR",
       readOnlyEnabled,
       readHealth: futures.health,
       storage: storageStatus,
@@ -138,6 +139,7 @@ export function createDashboardSnapshot(
       source: "MOCK",
     },
     paper: createIdlePaperTradingState(now),
+    risk: createRiskStatePlaceholder(now),
     history: [],
     logs: [
       {
@@ -155,4 +157,21 @@ export function createFakeDashboardSnapshot(
   now = new Date().toISOString(),
 ): DashboardSnapshot {
   return createDashboardSnapshot(authenticated, createFakeFuturesSnapshot(now), now);
+}
+
+export function createRiskStatePlaceholder(now = new Date().toISOString()) {
+  return RiskStateSchema.parse({
+    status: "READY",
+    killSwitch: "CLEAR",
+    limits: DEFAULT_RISK_LIMITS,
+    metrics: {
+      mode: "PAPER",
+      dateKey: now.slice(0, 10),
+      dailyOpenedTrades: 0,
+      dailyRealizedLossUsdt: 0,
+      consecutiveFailures: 0,
+    },
+    reasons: [],
+    updatedAt: now,
+  });
 }

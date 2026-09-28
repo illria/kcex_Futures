@@ -48,22 +48,26 @@ Spec: [docs/tasks/TASK-005.md](docs/tasks/TASK-005.md)
 - persisted Dashboard history with no fabricated records
 - no scheduler, KCEX mutation, or live trading
 
-## Review Ready
-
 ### TASK-006 — Paper Trading Lifecycle
 
-Status: REVIEW READY
+Status: COMPLETE
 
 Spec: [docs/tasks/TASK-006.md](docs/tasks/TASK-006.md)
 
 - deterministic explicit plan/open/mark/close Paper lifecycle
 - atomic lifecycle events and restart recovery through TASK-005 storage
 - read-only Paper state API, WebSocket state, and separate Dashboard panel
-- no scheduler, KCEX mutation, or live trading
+- merged to main; no scheduler, KCEX mutation, or live trading
 
-## Planned
+## In Progress
 
 ### TASK-007 — RiskEngine + Kill Switch
+
+Status: IN PROGRESS
+
+Spec: [docs/tasks/TASK-007.md](docs/tasks/TASK-007.md)
+
+## Planned
 
 ### TASK-008 — Assisted Single Live Order Flow
 

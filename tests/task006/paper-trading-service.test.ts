@@ -14,6 +14,7 @@ import { StorageService } from "../../apps/server/src/storage/storage-service.js
 import { TradeVersionConflictError } from "../../apps/server/src/storage/storage-errors.js";
 import type { DashboardEvent } from "../../packages/shared/src/protocol.js";
 import { plannedTradeInput } from "../task005/storage-test-helpers.js";
+import { allowPaperEntryForFixture } from "./paper-risk-fixture.js";
 
 const FIXED_TIME = "2026-09-26T12:00:00.000Z";
 
@@ -40,6 +41,7 @@ describe("PaperTradingService lifecycle", () => {
     const service = new PaperTradingService({
       storage,
       events,
+      risk: allowPaperEntryForFixture,
       feeRate,
       clock: () => new Date(FIXED_TIME),
       idGenerator: () => `60000000-0000-4000-8000-${String(id++).padStart(12, "0")}`,
@@ -114,6 +116,7 @@ describe("PaperTradingService lifecycle", () => {
     const service = new PaperTradingService({
       storage,
       events: new EventBus(),
+      risk: allowPaperEntryForFixture,
       clock: () => new Date(FIXED_TIME),
       idGenerator: () => ids.shift()!,
     });
@@ -132,7 +135,7 @@ describe("PaperTradingService lifecycle", () => {
       "71000000-0000-4000-8000-000000000003",
       collisionId,
     ];
-    const service = new PaperTradingService({ storage, events: new EventBus(), idGenerator: () => ids.shift()!, clock: () => new Date(FIXED_TIME) });
+    const service = new PaperTradingService({ storage, events: new EventBus(), risk: allowPaperEntryForFixture, idGenerator: () => ids.shift()!, clock: () => new Date(FIXED_TIME) });
     services.push(service);
     const planned = await service.planPaperTrade({ symbol: "GPS_USDT", side: "LONG", marginUsdt: 50, leverage: 10 });
 
@@ -151,7 +154,7 @@ describe("PaperTradingService lifecycle", () => {
       "72000000-0000-4000-8000-000000000004",
       collisionId,
     ];
-    const service = new PaperTradingService({ storage, events: new EventBus(), idGenerator: () => ids.shift()!, clock: () => new Date(FIXED_TIME) });
+    const service = new PaperTradingService({ storage, events: new EventBus(), risk: allowPaperEntryForFixture, idGenerator: () => ids.shift()!, clock: () => new Date(FIXED_TIME) });
     services.push(service);
     const planned = await service.planPaperTrade({ symbol: "GPS_USDT", side: "LONG", marginUsdt: 50, leverage: 10 });
     await service.openPaperTrade({ tradeId: planned.id, entryPrice: 0.01 });
@@ -237,7 +240,7 @@ describe("PaperTradingService lifecycle", () => {
     const planned = await service.planPaperTrade({ symbol: "GPS_USDT", side: "LONG", marginUsdt: 50, leverage: 10 });
     await expect(service.openPaperTrade({ tradeId: planned.id, entryPrice: 0 })).rejects.toThrow();
     expect(storage.trades.getTrade(planned.id)).toMatchObject({ status: "PLANNED", version: 1 });
-    expect(() => new PaperTradingService({ storage, events: new EventBus(), feeRate: 0.02 })).toThrow();
+    expect(() => new PaperTradingService({ storage, events: new EventBus(), risk: allowPaperEntryForFixture, feeRate: 0.02 })).toThrow();
   });
 
   it("allows exactly one transition when opening the same planned trade concurrently", async () => {

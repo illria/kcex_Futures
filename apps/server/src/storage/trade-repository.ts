@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import { z } from "zod";
 import {
   CreateTradeInputSchema,
   SafeAuditPayloadSchema,
@@ -57,6 +58,15 @@ type Clock = () => Date;
 interface TradeListOptions {
   limit?: number;
 }
+
+const DailyTradeQuerySchema = z.object({
+  mode: z.enum(["PAPER", "LIVE"]),
+  symbol: z.string().trim().min(1).max(64),
+  startAt: z.string().datetime(),
+  endAt: z.string().datetime(),
+}).strict().refine((query) => Date.parse(query.startAt) < Date.parse(query.endAt), {
+  message: "Daily query end must be after its start.",
+});
 
 export class TradeRepository {
   constructor(private readonly database: DatabaseSync, private readonly now: Clock = () => new Date()) {}
@@ -152,6 +162,31 @@ export class TradeRepository {
       LIMIT ?
     `).all(options.symbol, limit) as unknown as RawRow[];
     return rows.map(parseTradeRow);
+  }
+
+  countOpenedTrades(input: { mode: "PAPER" | "LIVE"; symbol: string; startAt: string; endAt: string }): number {
+    const query = DailyTradeQuerySchema.parse(input);
+    const row = this.database.prepare(`
+      SELECT COUNT(*) AS count
+      FROM trades
+      WHERE mode = ? AND symbol = ? AND opened_at >= ? AND opened_at < ?
+    `).get(query.mode, query.symbol, query.startAt, query.endAt) as { count?: number | bigint } | undefined;
+    const count = Number(row?.count);
+    if (!Number.isSafeInteger(count) || count < 0) throw new StorageDataIntegrityError("daily opened trade aggregate");
+    return count;
+  }
+
+  sumRealizedLossUsdt(input: { mode: "PAPER" | "LIVE"; symbol: string; startAt: string; endAt: string }): number {
+    const query = DailyTradeQuerySchema.parse(input);
+    const row = this.database.prepare(`
+      SELECT SUM(CASE WHEN realized_pnl < 0 THEN -realized_pnl ELSE 0 END) AS lossUsdt
+      FROM trades
+      WHERE mode = ? AND symbol = ? AND status = 'CLOSED' AND closed_at >= ? AND closed_at < ?
+    `).get(query.mode, query.symbol, query.startAt, query.endAt) as { lossUsdt?: number | bigint | null } | undefined;
+    if (!row) throw new StorageDataIntegrityError("daily realized loss aggregate");
+    const lossUsdt = row.lossUsdt == null ? 0 : Number(row.lossUsdt);
+    if (!Number.isFinite(lossUsdt) || lossUsdt < 0) throw new StorageDataIntegrityError("daily realized loss aggregate");
+    return lossUsdt;
   }
 
   appendTradeEvent(input: TradeEventInput): TradeEventRecord {

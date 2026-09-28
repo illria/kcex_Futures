@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { isTrustedKcexBaseUrl } from "../kcex/trusted-host.js";
+import { DEFAULT_RISK_LIMITS, RiskLimitsSchema, type RiskLimits } from "../../packages/shared/src/risk.js";
 
 const baseUrlSchema = z
   .string()
@@ -27,6 +28,12 @@ const environmentSchema = z.object({
   KCEX_READONLY_ENABLED: z.enum(["true", "false"]).default("false"),
   KCEX_READ_POLL_MS: z.coerce.number().int().min(2_000).max(60_000).default(5_000),
   PAPER_FEE_RATE: z.coerce.number().finite().min(0).max(0.01).default(0),
+  RISK_MAX_MARGIN_USDT: z.coerce.number().finite().positive().max(50).default(DEFAULT_RISK_LIMITS.maxMarginUsdt),
+  RISK_MAX_LEVERAGE: z.coerce.number().finite().positive().max(10).default(DEFAULT_RISK_LIMITS.maxLeverage),
+  RISK_MAX_DAILY_TRADES: z.coerce.number().int().min(1).max(10).default(DEFAULT_RISK_LIMITS.maxDailyTrades),
+  RISK_MAX_DAILY_LOSS_USDT: z.coerce.number().finite().positive().max(50).default(DEFAULT_RISK_LIMITS.maxDailyLossUsdt),
+  RISK_MAX_CONSECUTIVE_FAILURES: z.coerce.number().int().min(1).max(3).default(DEFAULT_RISK_LIMITS.maxConsecutiveFailures),
+  KILL_SWITCH_FILE: z.string().trim().min(1).default("./data/KILL_SWITCH"),
 });
 
 export interface AppConfig {
@@ -39,6 +46,8 @@ export interface AppConfig {
   KCEX_READONLY_ENABLED: boolean;
   KCEX_READ_POLL_MS: number;
   PAPER_FEE_RATE: number;
+  RISK_LIMITS: RiskLimits;
+  KILL_SWITCH_FILE: string;
 }
 
 export function loadConfig(
@@ -68,5 +77,13 @@ export function loadConfig(
     KCEX_READONLY_ENABLED: parsed.KCEX_READONLY_ENABLED === "true",
     KCEX_READ_POLL_MS: parsed.KCEX_READ_POLL_MS,
     PAPER_FEE_RATE: parsed.PAPER_FEE_RATE,
+    RISK_LIMITS: RiskLimitsSchema.parse({
+      maxMarginUsdt: parsed.RISK_MAX_MARGIN_USDT,
+      maxLeverage: parsed.RISK_MAX_LEVERAGE,
+      maxDailyTrades: parsed.RISK_MAX_DAILY_TRADES,
+      maxDailyLossUsdt: parsed.RISK_MAX_DAILY_LOSS_USDT,
+      maxConsecutiveFailures: parsed.RISK_MAX_CONSECUTIVE_FAILURES,
+    }),
+    KILL_SWITCH_FILE: parsed.KILL_SWITCH_FILE,
   };
 }

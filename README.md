@@ -212,11 +212,19 @@ TASK-005 不生成交易或计划，不读取或保存市场 tick、KCEX credent
 
 ## TASK-006 Paper Trading Lifecycle
 
-当前状态：REVIEW READY（PR #7 未合并，等待最终审核）。
+当前状态：COMPLETE（已合并到 main，merge commit `def6cf52a8b8b2011f2392303a8e9666ff593595`）。
 
 TASK-006 在 TASK-005 SQLite records 上实现确定性的本地 Paper 生命周期。只有 server 内部显式调用才会 plan、open、mark 或 close；Paper Position 与 KCEX Read-Only Position 在 API、WebSocket 和 Dashboard 中分开显示。模拟费率由 `PAPER_FEE_RATE` 配置，默认 `0`，不代表 KCEX 实际费率。
 
 本阶段没有 scheduler、自动交易、自动平仓、TP/SL、爆仓或风险引擎，也不增加 Paper 写入 HTTP API。Paper 状态只用于本地模拟，绝不会创建 KCEX 请求或真实订单。`LIVE_TRADING=false` 持续强制关闭。
+
+## TASK-007 RiskEngine + Kill Switch
+
+当前状态：IN PROGRESS。
+
+TASK-007 为 GPS_USDT Paper entry 增加始终启用的纯规则 RiskEngine、只读文件 Kill Switch、UTC 日计数与已实现 gross loss 限制、连续执行失败审计恢复，以及 Dashboard 风险面板和只读 `GET /api/v1/risk/state`。默认安全上限为 50 USDT margin、10x leverage、每日 10 次、每日 gross realized loss 50 USDT、连续失败 3 次；配置只能调低上限。
+
+Kill Switch 只阻止新 Paper entry；已有 Paper position 仍可 mark、close 和 recovery。Risk API 不提供写接口，不增加数据库迁移，不连接 KCEX，不自动交易。`LIVE_TRADING=false` 持续强制关闭。验收和范围见 [docs/tasks/TASK-007.md](docs/tasks/TASK-007.md)。
 
 ## 推荐技术栈
 
