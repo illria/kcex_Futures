@@ -184,7 +184,7 @@ export class PaperTradingService {
   }
 
   openPaperTrade(input: unknown): Promise<TradeRecord> {
-    return this.serialize(() => {
+    return this.serialize(async () => {
       this.assertOperational();
       const parsed = OpenPaperTradeInputSchema.safeParse(input);
       if (!parsed.success) throw new PaperTradingInputError();
