@@ -408,7 +408,7 @@ describe("TASK-004 read-only API boundaries", () => {
       });
     });
     expect(received.map((event) => event.type)).toEqual([
-      "auth.state", "paper.state", "risk.state", "scheduler.plan", "system.log", "system.heartbeat",
+      "auth.state", "risk.state", "paper.state", "scheduler.plan", "system.log", "system.heartbeat",
     ]);
     expect(received.some((event) => ["market.snapshot", "account.balance", "futures.contract", "position.changed", "orders.snapshot", "futures.read-health"].includes(event.type))).toBe(false);
   });
