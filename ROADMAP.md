@@ -44,7 +44,7 @@ after its GitHub Actions acceptance checks passed.
 
 No KCEX order submission or real position mutation.
 
-## Phase 3 — TASK-007: RiskEngine + Kill Switch (in progress)
+## Phase 3 — TASK-007: RiskEngine + Kill Switch (review ready)
 
 - symbol whitelist and bounded margin/leverage rules
 - open-position, daily-count, failure, and loss limits

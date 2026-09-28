@@ -59,11 +59,11 @@ Spec: [docs/tasks/TASK-006.md](docs/tasks/TASK-006.md)
 - read-only Paper state API, WebSocket state, and separate Dashboard panel
 - merged to main; no scheduler, KCEX mutation, or live trading
 
-## In Progress
+## Review Ready
 
 ### TASK-007 — RiskEngine + Kill Switch
 
-Status: IN PROGRESS
+Status: REVIEW READY
 
 Spec: [docs/tasks/TASK-007.md](docs/tasks/TASK-007.md)
 
