@@ -189,9 +189,6 @@ export class PaperTradingService {
 
       const openTrades = this.assertNoOpenPaperConflict();
       if (openTrades.some((openTrade) => openTrade.id !== trade.id)) {
-        if (this.state.status === "OPEN" && this.state.activeTradeId === openTrades[0]?.id) {
-          throw new PaperTradeInvalidTransitionError();
-        }
         throw new PaperStateConflictError();
       }
       const notionalUsdt = finitePositive(trade.marginUsdt! * trade.leverage!);
