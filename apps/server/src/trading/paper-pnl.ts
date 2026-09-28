@@ -61,3 +61,17 @@ export function calculatePaperCloseAccounting(input: PaperPnlInput, feeRate: num
   const realizedPnl = assertFiniteResult(grossPnl - fees);
   return { ...input, grossPnl, entryFee, exitFee, fees, realizedPnl };
 }
+
+export function calculatePaperCloseAccountingWithPersistedEntryFee(
+  input: PaperPnlInput,
+  persistedEntryFee: number,
+  lockedFeeRate: number,
+): PaperCloseAccounting {
+  assertFeeRate(lockedFeeRate);
+  if (!Number.isFinite(persistedEntryFee) || persistedEntryFee < 0) throw new PaperTradingInputError();
+  const grossPnl = calculatePaperGrossPnl(input);
+  const exitFee = calculatePaperEntryFee(input.exitPrice, input.quantity, lockedFeeRate);
+  const fees = assertFiniteResult(persistedEntryFee + exitFee);
+  const realizedPnl = assertFiniteResult(grossPnl - fees);
+  return { ...input, grossPnl, entryFee: persistedEntryFee, exitFee, fees, realizedPnl };
+}

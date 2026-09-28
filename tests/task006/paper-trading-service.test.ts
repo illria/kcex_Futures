@@ -240,26 +240,170 @@ describe("PaperTradingService lifecycle", () => {
     expect(() => new PaperTradingService({ storage, events: new EventBus(), feeRate: 0.02 })).toThrow();
   });
 
-  it("allows at most one open position during concurrent open calls", async () => {
+  it("allows exactly one transition when opening the same planned trade concurrently", async () => {
     const storage = await makeStorage();
-    const first = storage.trades.createTrade(plannedTradeInput({ id: "73000000-0000-4000-8000-000000000001", marginUsdt: 50, leverage: 10 }));
-    const second = storage.trades.createTrade(plannedTradeInput({ id: "73000000-0000-4000-8000-000000000002", marginUsdt: 50, leverage: 10 }));
-    const service = makeService(storage);
+    const events = new EventBus();
+    const observed: DashboardEvent[] = [];
+    events.subscribe((event) => observed.push(event));
+    const service = makeService(storage, events);
+    const planned = await service.planPaperTrade({ symbol: "GPS_USDT", side: "LONG", marginUsdt: 50, leverage: 10 });
 
     const results = await Promise.allSettled([
-      service.openPaperTrade({ tradeId: first.id, entryPrice: 0.01 }),
-      service.openPaperTrade({ tradeId: second.id, entryPrice: 0.01 }),
+      service.openPaperTrade({ tradeId: planned.id, entryPrice: 0.01 }),
+      service.openPaperTrade({ tradeId: planned.id, entryPrice: 0.01 }),
     ]);
     expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
     expect(storage.trades.listOpenPaperTrades({ symbol: "GPS_USDT", limit: 2 })).toHaveLength(1);
-    expect([storage.trades.getTrade(first.id)?.status, storage.trades.getTrade(second.id)?.status].sort()).toEqual(["OPEN", "PLANNED"]);
-    expect(service.getState()).toMatchObject({ status: "OPEN", activeTradeId: first.id });
+    expect(storage.trades.getTrade(planned.id)?.status).toBe("OPEN");
+    expect(storage.trades.listTradeEvents(planned.id).filter((event) => event.eventType === "PAPER_TRADE_OPENED")).toHaveLength(1);
+    expect(observed.filter((event) => event.type === "trade.opened")).toHaveLength(1);
+    expect(service.getState()).toMatchObject({ status: "OPEN", activeTradeId: planned.id });
+  });
+
+  it("rejects a database PLANNED record that is not the runtime active lifecycle", async () => {
+    const storage = await makeStorage();
+    const service = makeService(storage);
+    const active = await service.planPaperTrade({ symbol: "GPS_USDT", side: "LONG", marginUsdt: 50, leverage: 10 });
+    const other = storage.trades.createTrade(plannedTradeInput({
+      id: "73000000-0000-4000-8000-000000000002",
+      mode: "PAPER",
+      symbol: "GPS_USDT",
+      status: "PLANNED",
+      marginUsdt: 50,
+      leverage: 10,
+    }));
+
+    await expect(service.openPaperTrade({ tradeId: other.id, entryPrice: 0.01 })).rejects.toThrow(PaperTradeInvalidTransitionError);
+    expect(service.getState()).toMatchObject({ status: "PLANNED", activeTradeId: active.id });
+    expect(storage.trades.getTrade(active.id)?.status).toBe("PLANNED");
+    expect(storage.trades.getTrade(other.id)?.status).toBe("PLANNED");
+  });
+
+  it("does not reactivate a persisted PLANNED record after restart", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "paper-planned-recovery-"));
+    temporaryDirectories.push(directory);
+    const fileName = join(directory, "trading.sqlite3");
+    const storageA = await makeStorage(fileName);
+    const planned = storageA.trades.createTrade(plannedTradeInput({
+      id: "73000000-0000-4000-8000-000000000003",
+      mode: "PAPER",
+      symbol: "GPS_USDT",
+      status: "PLANNED",
+      marginUsdt: 50,
+      leverage: 10,
+    }));
+    storageA.close();
+    storages.splice(storages.indexOf(storageA), 1);
+
+    const storageB = await makeStorage(fileName);
+    const service = makeService(storageB);
+    await expect(service.recover()).resolves.toMatchObject({ status: "IDLE", activeTradeId: null, position: null });
+    await expect(service.openPaperTrade({ tradeId: planned.id, entryPrice: 0.01 })).rejects.toThrow(PaperTradeInvalidTransitionError);
+    expect(storageB.trades.getTrade(planned.id)?.status).toBe("PLANNED");
+    expect(service.getState().status).toBe("IDLE");
+  });
+
+  it.each([
+    { openFeeRate: 0.0001, restartFeeRate: 0, expectedEntryFee: 0.05, expectedFees: 0.105, expectedRealizedPnl: 49.895 },
+    { openFeeRate: 0, restartFeeRate: 0.001, expectedEntryFee: 0, expectedFees: 0, expectedRealizedPnl: 50 },
+  ])("preserves the open-time fee rate across restart ($openFeeRate → $restartFeeRate)", async ({
+    openFeeRate,
+    restartFeeRate,
+    expectedEntryFee,
+    expectedFees,
+    expectedRealizedPnl,
+  }) => {
+    const directory = await mkdtemp(join(tmpdir(), "paper-fee-recovery-"));
+    temporaryDirectories.push(directory);
+    const fileName = join(directory, "trading.sqlite3");
+    const storageA = await makeStorage(fileName);
+    const serviceA = makeService(storageA, new EventBus(), openFeeRate);
+    const planned = await serviceA.planPaperTrade({ symbol: "GPS_USDT", side: "LONG", marginUsdt: 50, leverage: 10 });
+    const opened = await serviceA.openPaperTrade({ tradeId: planned.id, entryPrice: 0.01 });
+    expect(opened.fees).toBeCloseTo(expectedEntryFee);
+    await serviceA.close();
+    services.splice(services.indexOf(serviceA), 1);
+    storageA.close();
+    storages.splice(storages.indexOf(storageA), 1);
+
+    const storageB = await makeStorage(fileName);
+    const serviceB = makeService(storageB, new EventBus(), restartFeeRate);
+    await expect(serviceB.recover()).resolves.toMatchObject({ status: "OPEN", activeTradeId: planned.id });
+    expect(storageB.trades.getTrade(planned.id)?.fees).toBeCloseTo(expectedEntryFee);
+    const closed = await serviceB.closePaperTrade({ tradeId: planned.id, exitPrice: 0.011 });
+    expect(closed.fees).toBeCloseTo(expectedFees);
+    expect(closed.realizedPnl).toBeCloseTo(expectedRealizedPnl);
+  });
+
+  it.each([
+    { name: "missing persisted fee", entryPrice: 0.01, quantity: 50_000, fees: null },
+    { name: "fee rate above the supported maximum", entryPrice: 0.01, quantity: 50_000, fees: 5.5 },
+    { name: "non-finite entry notional", entryPrice: 1e308, quantity: 1e308, fees: 0 },
+  ])("fails closed while recovering an OPEN trade with $name", async ({ entryPrice, quantity, fees }) => {
+    const storage = await makeStorage();
+    storage.trades.createTrade(plannedTradeInput({
+      id: "73000000-0000-4000-8000-000000000004",
+      mode: "PAPER",
+      symbol: "GPS_USDT",
+      status: "OPEN",
+      marginUsdt: 50,
+      leverage: 10,
+      quantity,
+      entryPrice,
+      fees,
+      openedAt: FIXED_TIME,
+    }));
+    const service = makeService(storage);
+
+    await expect(service.recover()).rejects.toThrow(PaperStateConflictError);
+    expect(service.getState()).toMatchObject({ status: "ERROR", activeTradeId: null, position: null });
+  });
+
+  it("isolates observer failures from successful Paper plan, open, and close transactions", async () => {
+    const storage = await makeStorage();
+    const events = new EventBus();
+    events.subscribe(() => {
+      throw new Error("fixture subscriber failure");
+    });
+    const service = makeService(storage, events);
+    const planned = await service.planPaperTrade({ symbol: "GPS_USDT", side: "LONG", marginUsdt: 50, leverage: 10 });
+    expect(storage.trades.getTrade(planned.id)?.status).toBe("PLANNED");
+
+    await service.openPaperTrade({ tradeId: planned.id, entryPrice: 0.01 });
+    expect(storage.trades.getTrade(planned.id)?.status).toBe("OPEN");
+
+    await service.closePaperTrade({ tradeId: planned.id, exitPrice: 0.011 });
+    expect(storage.trades.getTrade(planned.id)?.status).toBe("CLOSED");
+  });
+
+  it("recovers a valid OPEN position even when an observer throws", async () => {
+    const storage = await makeStorage();
+    storage.trades.createTrade(plannedTradeInput({
+      id: "73000000-0000-4000-8000-000000000005",
+      mode: "PAPER",
+      symbol: "GPS_USDT",
+      status: "OPEN",
+      marginUsdt: 50,
+      leverage: 10,
+      quantity: 50_000,
+      entryPrice: 0.01,
+      fees: 0,
+      openedAt: FIXED_TIME,
+    }));
+    const events = new EventBus();
+    events.subscribe(() => {
+      throw new Error("fixture subscriber failure");
+    });
+    const service = makeService(storage, events);
+
+    await expect(service.recover()).resolves.toMatchObject({ status: "OPEN", position: { entryPrice: 0.01 } });
   });
 
   it("halts recovery and future mutations when more than one open paper record exists", async () => {
     const storage = await makeStorage();
-    storage.trades.createTrade(plannedTradeInput({ id: "74000000-0000-4000-8000-000000000001", status: "OPEN", marginUsdt: 50, leverage: 10, quantity: 50_000, entryPrice: 0.01, openedAt: FIXED_TIME }));
-    storage.trades.createTrade(plannedTradeInput({ id: "74000000-0000-4000-8000-000000000002", status: "OPEN", marginUsdt: 50, leverage: 10, quantity: 50_000, entryPrice: 0.01, openedAt: FIXED_TIME }));
+    storage.trades.createTrade(plannedTradeInput({ id: "74000000-0000-4000-8000-000000000001", status: "OPEN", marginUsdt: 50, leverage: 10, quantity: 50_000, entryPrice: 0.01, fees: 0, openedAt: FIXED_TIME }));
+    storage.trades.createTrade(plannedTradeInput({ id: "74000000-0000-4000-8000-000000000002", status: "OPEN", marginUsdt: 50, leverage: 10, quantity: 50_000, entryPrice: 0.01, fees: 0, openedAt: FIXED_TIME }));
     const service = makeService(storage);
 
     await expect(service.recover()).rejects.toThrow(PaperStateConflictError);
@@ -269,7 +413,7 @@ describe("PaperTradingService lifecycle", () => {
 
   it("ignores LIVE open records during paper recovery", async () => {
     const storage = await makeStorage();
-    storage.trades.createTrade(plannedTradeInput({ mode: "LIVE", status: "OPEN", marginUsdt: 50, leverage: 10, quantity: 50_000, entryPrice: 0.01, openedAt: FIXED_TIME }));
+    storage.trades.createTrade(plannedTradeInput({ mode: "LIVE", status: "OPEN", marginUsdt: 50, leverage: 10, quantity: 50_000, entryPrice: 0.01, fees: 0, openedAt: FIXED_TIME }));
     const service = makeService(storage);
 
     await expect(service.recover()).resolves.toMatchObject({ status: "IDLE", activeTradeId: null, position: null });

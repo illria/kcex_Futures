@@ -61,7 +61,9 @@ PAPER_FEE_RATE is configurable, defaults to 0, and must be finite and between
 
 An OPEN record stores its entry fee, including numeric zero. A CLOSED record
 stores both simulated fees, including numeric zero. The UI label is
-“Simulated Fees” when presenting fee semantics.
+“Simulated Fees” when presenting fee semantics. After restart, the OPEN record's
+persisted entry fee and its derived fee rate lock that trade's fee model; closing
+adds the exit fee at that locked rate instead of applying the current config.
 
 ## Persistence and lifecycle events
 
@@ -81,6 +83,8 @@ this prevents high-frequency mark history growth.
 PaperTradingService.recover() queries at most two OPEN PAPER GPS_USDT records.
 
 - Zero rows: runtime state is IDLE.
+- PLANNED records are not automatically reactivated after restart. Only OPEN
+  Paper positions are recovered.
 - One valid row: runtime state is OPEN, restoring trade id, side, entry,
   quantity, margin, leverage, and opened time. markPrice and unrealizedPnl reset
   to null.

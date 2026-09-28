@@ -7,7 +7,13 @@ export class EventBus {
 
   publish(value: unknown): DashboardEvent {
     const event = parseDashboardEvent(value);
-    for (const listener of this.listeners) listener(event);
+    for (const listener of this.listeners) {
+      try {
+        listener(event);
+      } catch {
+        // Observer failures must not affect validated events or committed work.
+      }
+    }
     return event;
   }
 

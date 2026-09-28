@@ -20,7 +20,7 @@ import { EventBus } from "../realtime/event-bus.js";
 import { StorageService } from "../storage/storage-service.js";
 import { TradeNotFoundError, TradeVersionConflictError } from "../storage/storage-errors.js";
 import {
-  calculatePaperCloseAccounting,
+  calculatePaperCloseAccountingWithPersistedEntryFee,
   calculatePaperEntryFee,
   calculatePaperGrossPnl,
 } from "./paper-pnl.js";
@@ -183,10 +183,7 @@ export class PaperTradingService {
       if (!parsed.success) throw new PaperTradingInputError();
       const trade = this.requirePaperTrade(parsed.data.tradeId);
       if (trade.status !== "PLANNED") throw new PaperTradeInvalidTransitionError();
-      if (this.state.status === "PLANNED" && this.state.activeTradeId !== trade.id) {
-        throw new PaperTradeInvalidTransitionError();
-      }
-      if (this.state.status === "OPEN" && this.state.activeTradeId !== trade.id) {
+      if (this.state.status !== "PLANNED" || this.state.activeTradeId !== trade.id) {
         throw new PaperTradeInvalidTransitionError();
       }
 
@@ -285,12 +282,13 @@ export class PaperTradingService {
       if (trade.status !== "OPEN" || this.state.status !== "OPEN" || this.state.activeTradeId !== trade.id) {
         throw new PaperTradeInvalidTransitionError();
       }
-      const accounting = calculatePaperCloseAccounting({
+      const lockedFeeRate = lockedFeeRateForOpenTrade(trade);
+      const accounting = calculatePaperCloseAccountingWithPersistedEntryFee({
         side: trade.side,
         entryPrice: trade.entryPrice!,
         exitPrice: parsed.data.exitPrice,
         quantity: trade.quantity!,
-      }, this.feeRate);
+      }, trade.fees!, lockedFeeRate);
       const closedAt = parsed.data.closedAt ?? this.timestamp();
       const closeReason: PaperCloseReason = parsed.data.closeReason ?? "MANUAL";
       const updated = this.recordTransition(trade, {
@@ -474,7 +472,26 @@ function isRecoverableOpenTrade(trade: TradeRecord): boolean {
     && trade.marginUsdt > 0
     && trade.leverage !== null
     && trade.leverage > 0
-    && trade.openedAt !== null;
+    && trade.openedAt !== null
+    && lockedFeeRateFromOpenTrade(trade) !== null;
+}
+
+function lockedFeeRateForOpenTrade(trade: TradeRecord): number {
+  const feeRate = lockedFeeRateFromOpenTrade(trade);
+  if (feeRate === null) throw new PaperStateConflictError();
+  return feeRate;
+}
+
+function lockedFeeRateFromOpenTrade(trade: TradeRecord): number | null {
+  if (trade.entryPrice === null || trade.quantity === null || trade.fees === null) return null;
+  if (!Number.isFinite(trade.entryPrice) || trade.entryPrice <= 0) return null;
+  if (!Number.isFinite(trade.quantity) || trade.quantity <= 0) return null;
+  if (!Number.isFinite(trade.fees) || trade.fees < 0) return null;
+  const entryNotional = trade.entryPrice * trade.quantity;
+  if (!Number.isFinite(entryNotional) || entryNotional <= 0) return null;
+  const lockedFeeRate = trade.fees / entryNotional;
+  if (!Number.isFinite(lockedFeeRate) || lockedFeeRate < 0 || lockedFeeRate > 0.01) return null;
+  return lockedFeeRate;
 }
 
 function positionFromOpenTrade(trade: TradeRecord): PaperPosition {
