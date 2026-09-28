@@ -9,6 +9,14 @@ describe("Task 001 configuration", () => {
     expect(config.BROWSER_HEADLESS).toBe(false);
     expect(config.AUTH_PROVIDER).toBe("FAKE");
     expect(config.LIVE_TRADING).toBe(false);
+    expect(config.PAPER_FEE_RATE).toBe(0);
+  });
+
+  it("accepts only a bounded finite simulated paper fee rate", () => {
+    expect(loadConfig({ PAPER_FEE_RATE: "0.0001" }, () => undefined).PAPER_FEE_RATE).toBe(0.0001);
+    expect(() => loadConfig({ PAPER_FEE_RATE: "-0.1" }, () => undefined)).toThrow();
+    expect(() => loadConfig({ PAPER_FEE_RATE: "0.0101" }, () => undefined)).toThrow();
+    expect(() => loadConfig({ PAPER_FEE_RATE: "NaN" }, () => undefined)).toThrow();
   });
 
   it("ignores an attempt to enable live trading", () => {

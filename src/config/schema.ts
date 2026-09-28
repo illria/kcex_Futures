@@ -26,6 +26,7 @@ const environmentSchema = z.object({
   LIVE_TRADING: z.enum(["true", "false"]).default("false"),
   KCEX_READONLY_ENABLED: z.enum(["true", "false"]).default("false"),
   KCEX_READ_POLL_MS: z.coerce.number().int().min(2_000).max(60_000).default(5_000),
+  PAPER_FEE_RATE: z.coerce.number().finite().min(0).max(0.01).default(0),
 });
 
 export interface AppConfig {
@@ -37,6 +38,7 @@ export interface AppConfig {
   LIVE_TRADING: false;
   KCEX_READONLY_ENABLED: boolean;
   KCEX_READ_POLL_MS: number;
+  PAPER_FEE_RATE: number;
 }
 
 export function loadConfig(
@@ -65,5 +67,6 @@ export function loadConfig(
     LIVE_TRADING: false,
     KCEX_READONLY_ENABLED: parsed.KCEX_READONLY_ENABLED === "true",
     KCEX_READ_POLL_MS: parsed.KCEX_READ_POLL_MS,
+    PAPER_FEE_RATE: parsed.PAPER_FEE_RATE,
   };
 }

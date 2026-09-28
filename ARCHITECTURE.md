@@ -230,9 +230,42 @@ state, KCEX snapshots, or market time series. Credentials and sessions remain
 owned by the encrypted vault/session store. Live-arm state is runtime-only and
 is never persisted; process startup always forces `LIVE_TRADING=false`.
 
-TASK-005 exposes only read APIs to the Dashboard. It does not create trades,
-generate plans, execute a Paper Trade lifecycle, submit or cancel KCEX orders,
-or modify positions, leverage, or margin mode.
+TASK-005 introduced read APIs to the Dashboard. TASK-006 adds a server-internal
+deterministic Paper lifecycle that persists only PAPER-mode records through the
+same storage layer. It does not submit or cancel KCEX orders or modify
+exchange positions, leverage, or margin mode.
+
+### Paper Trading Layer (TASK-006)
+
+Only a future explicit server-side caller may invoke
+PaperTradingService.planPaperTrade(), openPaperTrade(),
+markPaperTrade(), or closePaperTrade(). The service depends on
+StorageService, the shared EventBus, an injectable clock/ID generator, and
+the bounded simulated fee rate. It has no KCEX auth adapter, browser page,
+credential, session, or Playwright dependency.
+
+Data path: future explicit caller → PaperTradingService → pure linear USDT PnL
+model → StorageService / TradeRepository → SQLite. The service publishes shared
+paper.state and trade lifecycle events through EventBus to the Dashboard.
+
+Paper simulation uses marginUsdt * leverage notional and
+notionalUsdt / entryPrice quantity. Its fees are configurable simulation
+values, defaulting to zero; this is not a verified KCEX fee model. Mark
+updates remain runtime-only and do not write per-tick database records.
+Startup recovery restores at most one persisted open PAPER GPS_USDT record,
+with mark and unrealized PnL reset to null. Multiple open records halt Paper
+mutations and surface an ERROR runtime state while the read-only Dashboard
+remains available.
+
+The Dashboard exposes only GET /api/v1/paper/state. Paper lifecycle commands
+are not HTTP endpoints. paper.state uses the shared schema and remains separate
+from futures.position, which represents KCEX read-only data. LIVE_TRADING=false
+remains enforced; this layer has no KCEX write capability.
+
+Server startup initializes storage, constructs and recovers the Paper service,
+then creates/listens on the HTTP server. A Paper recovery conflict is surfaced
+as runtime ERROR without blocking the read-only Dashboard. Shutdown stops the
+Paper service before futures/auth services and storage.
 
 ### 1. KCEX adapter layer
 

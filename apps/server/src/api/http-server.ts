@@ -12,6 +12,7 @@ import {
 } from "../../../../packages/shared/src/fake-snapshot.js";
 import {
   MASTER_KEY_MIN_LENGTH,
+  DashboardSnapshotSchema,
   parseDashboardEvent,
   type AuthState,
   type DashboardEvent,
@@ -20,11 +21,13 @@ import {
   StorageHealthSchema,
   TradeHistoryResponseSchema,
 } from "../../../../packages/shared/src/storage.js";
+import { createIdlePaperTradingState, PaperTradingStateSchema } from "../../../../packages/shared/src/paper-trading.js";
 import { AuthService } from "../auth/auth-service.js";
 import { EventBus } from "../realtime/event-bus.js";
 import { EncryptedCredentialVault, VaultLockedError, VaultUnlockError } from "../vault/encrypted-vault.js";
 import type { FuturesReadService } from "../futures/futures-read-service.js";
 import type { StorageService } from "../storage/storage-service.js";
+import type { PaperTradingService } from "../trading/paper-trading-service.js";
 
 const UnlockInputSchema = z.object({
   masterKey: z.string().min(MASTER_KEY_MIN_LENGTH).max(4096),
@@ -44,6 +47,7 @@ export interface DashboardServerOptions {
   startedAt?: number;
   futuresRead?: FuturesReadService;
   storage?: StorageService;
+  paperTrading?: PaperTradingService;
 }
 
 class HttpError extends Error {
@@ -177,6 +181,7 @@ async function handleApiRequest(
   vault: EncryptedCredentialVault,
   futuresRead: FuturesReadService | undefined,
   storage: StorageService | undefined,
+  paperTrading: PaperTradingService | undefined,
 ): Promise<boolean> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "127.0.0.1"}`);
   const method = request.method ?? "GET";
@@ -252,7 +257,7 @@ async function handleApiRequest(
     } catch {
       storageFailed = true;
     }
-    const snapshot = createDashboardSnapshot(
+    const baseSnapshot = createDashboardSnapshot(
       state.status === "AUTHENTICATED",
       latest,
       new Date().toISOString(),
@@ -260,7 +265,11 @@ async function handleApiRequest(
       futuresRead?.getBrowserStatus() ?? (state.authProvider === "KCEX" ? "NOT_STARTED" : undefined),
       storageStatus,
     );
-    snapshot.history = history;
+    const snapshot = DashboardSnapshotSchema.parse({
+      ...baseSnapshot,
+      paper: paperTrading?.getState() ?? createIdlePaperTradingState(new Date().toISOString()),
+      history,
+    });
     if (storageFailed) {
       snapshot.status.storage = "DEGRADED";
       snapshot.logs = [{
@@ -284,6 +293,13 @@ async function handleApiRequest(
       }
     }
     sendJson(response, 200, snapshot);
+    return true;
+  }
+
+  if (method === "GET" && url.pathname === "/api/v1/paper/state") {
+    sendJson(response, 200, PaperTradingStateSchema.parse(
+      paperTrading?.getState() ?? createIdlePaperTradingState(new Date().toISOString()),
+    ));
     return true;
   }
 
@@ -433,7 +449,12 @@ function dashboardContentSecurityPolicy(loopbackHost: string): string {
   return "default-src 'self'; connect-src 'self' ws://" + loopbackHost + "; frame-ancestors 'none'";
 }
 
-function initialEvents(authState: AuthState, startedAt: number, futuresRead?: FuturesReadService): DashboardEvent[] {
+function initialEvents(
+  authState: AuthState,
+  startedAt: number,
+  futuresRead?: FuturesReadService,
+  paperTrading?: PaperTradingService,
+): DashboardEvent[] {
   const now = new Date().toISOString();
   const latest = futuresRead?.getLatestSnapshot();
   const readState = futuresRead?.getReadState();
@@ -491,6 +512,7 @@ function initialEvents(authState: AuthState, startedAt: number, futuresRead?: Fu
     );
   }
   proposed.push(
+    { version: 1, type: "paper.state", timestamp: now, payload: paperTrading?.getState() ?? createIdlePaperTradingState(now) },
     { version: 1, type: "scheduler.plan", timestamp: now, payload: snapshot.scheduler },
     { version: 1, type: "system.log", timestamp: now, payload: snapshot.logs[0] },
     {
@@ -510,7 +532,15 @@ export function createDashboardServer(options: DashboardServerOptions): Server {
     void (async () => {
       try {
         const loopbackHost = requireLoopbackHost(request);
-        const handled = await handleApiRequest(request, response, options.auth, options.vault, options.futuresRead, options.storage);
+        const handled = await handleApiRequest(
+          request,
+          response,
+          options.auth,
+          options.vault,
+          options.futuresRead,
+          options.storage,
+          options.paperTrading,
+        );
         if (!handled) await serveStatic(request, response, options.staticRoot, loopbackHost);
         if (!handled && !response.writableEnded) sendJson(response, 404, { error: "Not found." });
       } catch (error) {
@@ -547,7 +577,7 @@ export function createDashboardServer(options: DashboardServerOptions): Server {
     const unsubscribe = options.events.subscribe((event) => {
       if (webSocket.readyState === WebSocket.OPEN) webSocket.send(JSON.stringify(event));
     });
-    for (const event of initialEvents(options.auth.getState(), startedAt, options.futuresRead)) {
+    for (const event of initialEvents(options.auth.getState(), startedAt, options.futuresRead, options.paperTrading)) {
       webSocket.send(JSON.stringify(event));
     }
     webSocket.on("message", () => webSocket.close(1008, "Read-only event stream."));

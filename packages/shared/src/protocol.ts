@@ -1,5 +1,10 @@
 import { z } from "zod";
 import { StorageStatusSchema, TradeHistoryEntrySchema } from "./storage.js";
+import {
+  PaperTradingStateSchema,
+  TradeClosedPayloadSchema,
+  TradeOpenedPayloadSchema,
+} from "./paper-trading.js";
 
 export const MASTER_KEY_MIN_LENGTH = 12;
 
@@ -218,6 +223,7 @@ export const DashboardSnapshotSchema = z
     position: PositionSnapshotSchema,
     openOrders: OpenOrdersSnapshotSchema,
     scheduler: SchedulerPlanSchema,
+    paper: PaperTradingStateSchema,
     history: z.array(TradeHistoryEntrySchema).max(100),
     logs: z.array(RuntimeLogSchema).max(100),
   })
@@ -274,6 +280,9 @@ export const DashboardEventSchema = z.discriminatedUnion("type", [
     }).strict(),
   }).strict(),
   z.object({ ...EventMetaSchema, type: z.literal("scheduler.plan"), payload: SchedulerPlanSchema }).strict(),
+  z.object({ ...EventMetaSchema, type: z.literal("paper.state"), payload: PaperTradingStateSchema }).strict(),
+  z.object({ ...EventMetaSchema, type: z.literal("trade.opened"), payload: TradeOpenedPayloadSchema }).strict(),
+  z.object({ ...EventMetaSchema, type: z.literal("trade.closed"), payload: TradeClosedPayloadSchema }).strict(),
   z.object({ ...EventMetaSchema, type: z.literal("system.log"), payload: RuntimeLogSchema }).strict(),
   z.object({
     ...EventMetaSchema,
