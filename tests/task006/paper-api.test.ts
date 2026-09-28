@@ -9,6 +9,7 @@ import { PaperTradingService } from "../../apps/server/src/trading/paper-trading
 import { DashboardSnapshotSchema, parseDashboardEvent, type AuthState } from "../../packages/shared/src/protocol.js";
 import { PaperTradingStateSchema } from "../../packages/shared/src/paper-trading.js";
 import { createAuthFixture } from "../task002/helpers.js";
+import { allowPaperEntryForFixture } from "./paper-risk-fixture.js";
 
 describe("read-only Paper Trading API and WebSocket state", () => {
   const servers: Array<ReturnType<typeof createDashboardServer>> = [];
@@ -32,7 +33,7 @@ describe("read-only Paper Trading API and WebSocket state", () => {
     await storage.initialize();
     storages.push(storage);
     const events = new EventBus();
-    const service = new PaperTradingService({ storage, events });
+    const service = new PaperTradingService({ storage, events, risk: allowPaperEntryForFixture });
     services.push(service);
     const state: AuthState = {
       status: "VAULT_UNLOCKED",

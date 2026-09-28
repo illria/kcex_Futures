@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { StorageStatusSchema, TradeHistoryEntrySchema } from "./storage.js";
+import { KillSwitchStatusSchema, RiskReasonCodeSchema, RiskStateSchema } from "./risk.js";
 import {
   PaperTradingStateSchema,
   TradeClosedPayloadSchema,
@@ -209,7 +210,7 @@ export const DashboardSnapshotSchema = z
         browser: BrowserStatusSchema,
         mode: z.literal("PAPER"),
         trading: z.literal("PAUSED"),
-        killSwitch: z.literal("NORMAL"),
+        killSwitch: KillSwitchStatusSchema,
         readOnlyEnabled: z.boolean(),
         readHealth: ReadHealthSchema,
         storage: StorageStatusSchema,
@@ -224,6 +225,7 @@ export const DashboardSnapshotSchema = z
     openOrders: OpenOrdersSnapshotSchema,
     scheduler: SchedulerPlanSchema,
     paper: PaperTradingStateSchema,
+    risk: RiskStateSchema,
     history: z.array(TradeHistoryEntrySchema).max(100),
     logs: z.array(RuntimeLogSchema).max(100),
   })
@@ -239,6 +241,9 @@ export const DashboardSnapshotSchema = z
     ];
     if (sources.some((source) => source !== snapshot.futures.source)) {
       context.addIssue({ code: "custom", message: "Dashboard snapshot contains mixed data sources." });
+    }
+    if (snapshot.status.killSwitch !== snapshot.risk.killSwitch) {
+      context.addIssue({ code: "custom", message: "Dashboard Kill Switch status must match the Risk state." });
     }
   });
 export type DashboardSnapshot = z.infer<typeof DashboardSnapshotSchema>;
@@ -281,6 +286,19 @@ export const DashboardEventSchema = z.discriminatedUnion("type", [
   }).strict(),
   z.object({ ...EventMetaSchema, type: z.literal("scheduler.plan"), payload: SchedulerPlanSchema }).strict(),
   z.object({ ...EventMetaSchema, type: z.literal("paper.state"), payload: PaperTradingStateSchema }).strict(),
+  z.object({ ...EventMetaSchema, type: z.literal("risk.state"), payload: RiskStateSchema }).strict(),
+  z.object({
+    ...EventMetaSchema,
+    type: z.literal("risk.blocked"),
+    payload: z.object({
+      mode: z.enum(["PAPER", "LIVE"]),
+      symbol: z.string().trim().min(1).max(64),
+      side: z.enum(["LONG", "SHORT"]),
+      marginUsdt: z.number().finite().positive(),
+      leverage: z.number().finite().positive(),
+      reasons: z.array(RiskReasonCodeSchema).min(1),
+    }).strict(),
+  }).strict(),
   z.object({ ...EventMetaSchema, type: z.literal("trade.opened"), payload: TradeOpenedPayloadSchema }).strict(),
   z.object({ ...EventMetaSchema, type: z.literal("trade.closed"), payload: TradeClosedPayloadSchema }).strict(),
   z.object({ ...EventMetaSchema, type: z.literal("system.log"), payload: RuntimeLogSchema }).strict(),

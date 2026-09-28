@@ -13,6 +13,7 @@ import {
   type DashboardSnapshot,
   type KcexFuturesSnapshot,
 } from "../../../packages/shared/src/protocol.js";
+import { RiskStateSchema, type RiskState } from "../../../packages/shared/src/risk.js";
 import type { PaperTradingState } from "../../../packages/shared/src/paper-trading.js";
 
 interface ApiError extends Error {
@@ -65,6 +66,29 @@ export function applyPaperStateToDashboard(
   paper: PaperTradingState,
 ): DashboardSnapshot {
   return DashboardSnapshotSchema.parse({ ...current, paper });
+}
+
+export function applyRiskStateToDashboard(current: DashboardSnapshot, risk: RiskState): DashboardSnapshot {
+  return DashboardSnapshotSchema.parse({
+    ...current,
+    risk,
+    status: { ...current.status, killSwitch: risk.killSwitch },
+  });
+}
+
+type RiskBlockedPayload = Extract<DashboardEvent, { type: "risk.blocked" }>;
+
+export function applyRiskBlockedToDashboard(
+  current: DashboardSnapshot,
+  payload: RiskBlockedPayload["payload"],
+): DashboardSnapshot {
+  const risk = RiskStateSchema.parse({
+    ...current.risk,
+    status: current.risk.status === "HALTED" ? "HALTED" : "BLOCKED",
+    reasons: payload.reasons,
+    updatedAt: current.risk.updatedAt,
+  });
+  return applyRiskStateToDashboard(current, risk);
 }
 
 /**
@@ -148,6 +172,30 @@ export function DashboardView({
         <StatusTile label="Read Health" value={snapshot.status.readHealth} />
         <StatusTile label="Freshness" value={futures.freshness} />
         <StatusTile label="Storage" value={snapshot.status.storage} />
+      </section>
+
+      <section className="panel risk-panel" aria-label="Risk Controls">
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">RISK CONTROLS · READ ONLY</p>
+            <h2>Risk Controls</h2>
+          </div>
+          <span className="source-tag">{snapshot.risk.status}</span>
+        </div>
+        <div className="metric-grid four">
+          <Metric label="Risk Status" value={snapshot.risk.status} />
+          <Metric label="Kill Switch" value={snapshot.risk.killSwitch} />
+          <Metric label="Max Margin" value={`${snapshot.risk.limits.maxMarginUsdt.toFixed(2)} USDT`} />
+          <Metric label="Max Leverage" value={`${snapshot.risk.limits.maxLeverage}x`} />
+          <Metric label="Daily Entries" value={`${displayCount(snapshot.risk.metrics.dailyOpenedTrades)} / ${snapshot.risk.limits.maxDailyTrades}`} />
+          <Metric label="Daily Realized Loss" value={`${displayMoney(snapshot.risk.metrics.dailyRealizedLossUsdt)} / ${snapshot.risk.limits.maxDailyLossUsdt.toFixed(2)} USDT`} />
+          <Metric label="Consecutive Failures" value={`${displayCount(snapshot.risk.metrics.consecutiveFailures)} / ${snapshot.risk.limits.maxConsecutiveFailures}`} />
+          <Metric label="Scope" value="PAPER" />
+        </div>
+        <p className="muted-note">
+          Block reasons: {snapshot.risk.reasons.length ? snapshot.risk.reasons.join(", ") : "None"}
+        </p>
+        <p className="safety-note">LIVE_TRADING=false · Risk state is read only.</p>
       </section>
 
       <div className="stream-state" role="status">
@@ -346,6 +394,14 @@ function formatHistoryNumber(value: number | null): string {
 
 function formatHistoryMoney(value: number | null): string {
   return value === null ? "—" : `${value.toFixed(2)} USDT`;
+}
+
+function displayCount(value: number | null): string {
+  return value === null ? "—" : String(value);
+}
+
+function displayMoney(value: number | null): string {
+  return value === null ? "—" : value.toFixed(2);
 }
 
 export function AuthPanel({
@@ -764,6 +820,12 @@ export function App() {
         }
         if (event.type === "paper.state") {
           setSnapshot((current) => applyPaperStateToDashboard(current, event.payload));
+        }
+        if (event.type === "risk.state") {
+          setSnapshot((current) => applyRiskStateToDashboard(current, event.payload));
+        }
+        if (event.type === "risk.blocked") {
+          setSnapshot((current) => applyRiskBlockedToDashboard(current, event.payload));
         }
         if (event.type === "trade.opened" || event.type === "trade.closed") {
           void refreshSnapshot();

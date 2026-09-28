@@ -31,7 +31,7 @@ Real KCEX DOM, authenticated session, and account verification remain deferred.
 
 Exit criteria completed in GitHub Actions; TASK-005 was merged to main.
 
-## Phase 2 — TASK-006: Paper Trading Lifecycle (review ready)
+## Phase 2 — TASK-006: Paper Trading Lifecycle (complete)
 
 - deterministic lifecycle driven only by an explicit future upper-layer input
 - paper-only positions and simulated outcomes
@@ -39,17 +39,20 @@ Exit criteria completed in GitHub Actions; TASK-005 was merged to main.
 - deterministic fixtures and restart/recovery coverage in CI
 - no scheduler, auto trades, KCEX order mutation, or paper write HTTP API
 
-Implementation and acceptance checks are complete in GitHub Actions for PR review;
-TASK-006 remains unmerged and awaits final review.
+TASK-006 was merged to main at `def6cf52a8b8b2011f2392303a8e9666ff593595`
+after its GitHub Actions acceptance checks passed.
 
 No KCEX order submission or real position mutation.
 
-## Phase 3 — TASK-007: RiskEngine + Kill Switch (planned)
+## Phase 3 — TASK-007: RiskEngine + Kill Switch (review ready)
 
 - symbol whitelist and bounded margin/leverage rules
 - open-position, daily-count, failure, and loss limits
 - kill-switch behavior and pure rule tests
 - unknown state fails closed
+
+See [docs/tasks/TASK-007.md](docs/tasks/TASK-007.md) for limits, integration,
+audit, API, Dashboard, and acceptance requirements. TASK-008 remains planned.
 
 ## Phase 4 — TASK-008: Assisted Single Live Order Flow (planned)
 

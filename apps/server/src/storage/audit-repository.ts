@@ -13,12 +13,14 @@ type RawRow = Record<string, unknown>;
 type Clock = () => Date;
 
 export class AuditRepository {
+  private lastCreatedAtMs: number | null = null;
+
   constructor(private readonly database: DatabaseSync, private readonly now: Clock = () => new Date()) {}
 
   appendAuditEvent(input: AppendAuditEventInput): AuditEventRecord {
     const validated = AppendAuditEventInputSchema.parse(input);
     const id = validated.id ?? randomUUID();
-    const createdAt = this.now().toISOString();
+    const createdAt = this.nextCreatedAt();
     const payload = validated.payload === undefined || validated.payload === null
       ? null
       : SafeAuditPayloadSchema.parse(validated.payload);
@@ -50,6 +52,37 @@ export class AuditRepository {
       LIMIT ?
     `).all(limit) as unknown as RawRow[];
     return rows.map(parseAuditEventRow);
+  }
+
+  listRiskExecutionEvents(options: { limit: number }): AuditEventRecord[] {
+    const limit = options.limit;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      throw new RangeError("List limit must be an integer from 1 to 100.");
+    }
+    const rows = this.database.prepare(`
+      SELECT id, category, event_type AS eventType, severity, message, payload_json AS payloadJson, created_at AS createdAt
+      FROM audit_events
+      WHERE category = 'RISK' AND event_type IN ('RISK_EXECUTION_FAILURE', 'RISK_EXECUTION_SUCCESS')
+      ORDER BY created_at DESC, id DESC
+      LIMIT ?
+    `).all(limit) as unknown as RawRow[];
+    return rows.map(parseAuditEventRow);
+  }
+
+  private nextCreatedAt(): string {
+    if (this.lastCreatedAtMs === null) {
+      const row = this.database.prepare("SELECT MAX(created_at) AS latest FROM audit_events").get() as
+        | { latest?: string | null }
+        | undefined;
+      const latestMs = row?.latest ? Date.parse(row.latest) : Number.NEGATIVE_INFINITY;
+      this.lastCreatedAtMs = Number.isFinite(latestMs) ? latestMs : Number.NEGATIVE_INFINITY;
+    }
+    const current = this.now();
+    const currentMs = current.getTime();
+    if (!Number.isFinite(currentMs)) throw new StorageDataIntegrityError("audit event");
+    const nextMs = Math.max(currentMs, this.lastCreatedAtMs + 1);
+    this.lastCreatedAtMs = nextMs;
+    return new Date(nextMs).toISOString();
   }
 }
 

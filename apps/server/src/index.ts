@@ -12,6 +12,8 @@ import { FuturesReadService } from "./futures/futures-read-service.js";
 import { StorageService } from "./storage/storage-service.js";
 import { DatabaseSchemaTooNewError } from "./storage/storage-errors.js";
 import { PaperTradingService } from "./trading/paper-trading-service.js";
+import { KillSwitchService } from "./risk/kill-switch.js";
+import { RiskService } from "./risk/risk-service.js";
 import { logger } from "../../../src/logging/logger.js";
 import { loadConfig } from "../../../src/config/schema.js";
 
@@ -44,9 +46,17 @@ async function startServer(): Promise<void> {
     vault,
     process.env.SESSION_FILE?.trim() || resolve(process.cwd(), "data/kcex-session.enc.json"),
   );
+  const risk = new RiskService({
+    storage,
+    events,
+    killSwitch: new KillSwitchService(resolve(process.cwd(), config.KILL_SWITCH_FILE)),
+    limits: config.RISK_LIMITS,
+  });
+  await risk.initialize();
   const paperTrading = new PaperTradingService({
     storage,
     events,
+    risk,
     feeRate: config.PAPER_FEE_RATE,
   });
   try {
@@ -54,6 +64,7 @@ async function startServer(): Promise<void> {
   } catch {
     logger.error({ errorCode: "PAPER_STATE_RECOVERY_CONFLICT" }, "Paper trading recovery halted safely.");
   }
+  await risk.refresh();
   const adapter = config.AUTH_PROVIDER === "KCEX"
     ? new KcexAuthAdapter({ baseUrl: config.KCEX_BASE_URL, headless: config.BROWSER_HEADLESS })
     : new FakeAuthAdapter();
@@ -89,6 +100,7 @@ async function startServer(): Promise<void> {
     staticRoot: process.env.DASHBOARD_DEV === "true" ? undefined : resolveStaticRoot(),
     futuresRead,
     paperTrading,
+    risk,
   });
 
   const heartbeat = setInterval(() => {

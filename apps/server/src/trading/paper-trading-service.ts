@@ -16,6 +16,7 @@ import {
   type TradeUpdate,
 } from "../../../../packages/shared/src/storage.js";
 import type { DashboardEvent } from "../../../../packages/shared/src/protocol.js";
+import type { RiskTradeIntent } from "../../../../packages/shared/src/risk.js";
 import { EventBus } from "../realtime/event-bus.js";
 import { StorageService } from "../storage/storage-service.js";
 import { TradeNotFoundError, TradeVersionConflictError } from "../storage/storage-errors.js";
@@ -68,9 +69,14 @@ const ClosePaperTradeInputSchema = z.object({
 export interface PaperTradingServiceOptions {
   storage: StorageService;
   events: EventBus;
+  risk: PaperEntryRiskGuard;
   feeRate?: number;
   clock?: () => Date;
   idGenerator?: () => string;
+}
+
+export interface PaperEntryRiskGuard {
+  assertCanOpen(intent: RiskTradeIntent): Promise<void> | void;
 }
 
 type Clock = () => Date;
@@ -92,6 +98,7 @@ export class PaperTradingService {
     this.idGenerator = options.idGenerator ?? randomUUID;
     this.feeRate = options.feeRate ?? 0;
     if (!PaperFeeRateSchema.safeParse(this.feeRate).success) throw new PaperTradingInputError();
+    if (!options.risk || typeof options.risk.assertCanOpen !== "function") throw new PaperTradingInputError();
     this.state = createIdlePaperTradingState(this.timestamp());
   }
 
@@ -177,7 +184,7 @@ export class PaperTradingService {
   }
 
   openPaperTrade(input: unknown): Promise<TradeRecord> {
-    return this.serialize(() => {
+    return this.serialize(async () => {
       this.assertOperational();
       const parsed = OpenPaperTradeInputSchema.safeParse(input);
       if (!parsed.success) throw new PaperTradingInputError();
@@ -186,11 +193,16 @@ export class PaperTradingService {
       if (this.state.status !== "PLANNED" || this.state.activeTradeId !== trade.id) {
         throw new PaperTradeInvalidTransitionError();
       }
-
+      if (trade.marginUsdt === null || trade.leverage === null) throw new PaperStateConflictError();
+      await this.options.risk.assertCanOpen({
+        mode: "PAPER",
+        symbol: trade.symbol,
+        side: trade.side,
+        marginUsdt: trade.marginUsdt,
+        leverage: trade.leverage,
+      });
       const openTrades = this.assertNoOpenPaperConflict();
-      if (openTrades.some((openTrade) => openTrade.id !== trade.id)) {
-        throw new PaperStateConflictError();
-      }
+      if (openTrades.some((openTrade) => openTrade.id !== trade.id)) throw new PaperStateConflictError();
       const notionalUsdt = finitePositive(trade.marginUsdt! * trade.leverage!);
       const quantity = finitePositive(notionalUsdt / parsed.data.entryPrice);
       const openedAt = parsed.data.openedAt ?? this.timestamp();

@@ -193,6 +193,7 @@ scheduler.plan
 trade.opened
 trade.closed
 risk.blocked
+risk.state
 system.log
 system.heartbeat
 ```
@@ -262,10 +263,27 @@ are not HTTP endpoints. paper.state uses the shared schema and remains separate
 from futures.position, which represents KCEX read-only data. LIVE_TRADING=false
 remains enforced; this layer has no KCEX write capability.
 
-Server startup initializes storage, constructs and recovers the Paper service,
-then creates/listens on the HTTP server. A Paper recovery conflict is surfaced
-as runtime ERROR without blocking the read-only Dashboard. Shutdown stops the
-Paper service before futures/auth services and storage.
+Server startup initializes storage, initializes RiskService, constructs and
+recovers the Paper service, then creates/listens on the HTTP server. A Paper
+recovery conflict is surfaced as runtime ERROR without blocking the read-only
+Dashboard. Shutdown stops the Paper service before futures/auth services and
+storage.
+
+### Risk Controls (TASK-007)
+
+RiskService is initialized after storage and before Paper recovery. It owns the
+read-only file Kill Switch check, bounded SQLite aggregates, execution-failure
+recovery from RISK audit events, and shared risk.state / risk.blocked events.
+The pure RiskEngine receives only a validated trade intent, runtime context, and
+bounded limits; it has no filesystem, database, logger, browser, or KCEX imports.
+
+PaperTradingService requires an explicit Risk guard and checks it after loading
+the active PLANNED record but before calculating or persisting an OPEN fill.
+Risk blocks leave the plan unchanged. Kill Switch state applies only to new
+entries; marking, closing, and startup recovery of existing Paper positions
+remain available. The Dashboard and `/api/v1/risk/state` expose read-only state.
+Risk uses existing `trades` and `audit_events` tables; TASK-007 adds no
+migration, write API, scheduler, or live execution path.
 
 ### 1. KCEX adapter layer
 
