@@ -13,7 +13,7 @@ describe("TASK-009 execution attempt migration", () => {
       ) VALUES (?, 'GPS_USDT', 'PAPER', 'LONG', 'OPEN', '2026-09-29T12:00:00.000Z', '2026-09-29T12:00:00.000Z', 1)`)
         .run(tradeId);
 
-      expect(new MigrationRunner(database).run()).toBe(2);
+      expect(new MigrationRunner(database, STORAGE_MIGRATIONS.slice(0, 2)).run()).toBe(2);
       expect(database.prepare("SELECT id, mode, status FROM trades WHERE id = ?").get(tradeId))
         .toEqual({ id: tradeId, mode: "PAPER", status: "OPEN" });
       expect(database.prepare("SELECT MAX(version) AS version FROM schema_migrations").get())

@@ -75,17 +75,25 @@ Spec: [docs/tasks/TASK-008.md](docs/tasks/TASK-008.md)
 
 Merged to main before TASK-009. Real KCEX order mutation remains disabled.
 
-## Review Ready
-
 ### TASK-009 — Position Confirmation + UNKNOWN State
 
-Status: REVIEW READY
+Status: COMPLETE
 
 Spec: [docs/tasks/TASK-009.md](docs/tasks/TASK-009.md)
 
-## Planned
+Merged to main at `02d761dd5bd3714921b23d75972aa40884f1d0d2`; post-merge GitHub Actions passed.
+
+## In Progress
 
 ### TASK-010 — TP/SL Management
+
+Status: IN PROGRESS
+
+Spec: [docs/tasks/TASK-010.md](docs/tasks/TASK-010.md)
+
+Fixture protection only. Real KCEX protective-order mutation remains deferred.
+
+## Planned
 
 ### TASK-011 — Daily Random Scheduler
 

@@ -43,6 +43,13 @@ import type { PaperTradingService } from "../trading/paper-trading-service.js";
 import type { RiskService } from "../risk/risk-service.js";
 import type { AssistedLiveService } from "../execution/assisted-live-service.js";
 import { AssistedExecutionError } from "../execution/execution-errors.js";
+import {
+  ProtectionConfirmationInputSchema,
+  ProtectionIntentSchema,
+  ProtectionRuntimeStateSchema,
+} from "../../../../packages/shared/src/protection.js";
+import type { ProtectionService } from "../protection/protection-service.js";
+import { ProtectionServiceError } from "../protection/protection-service.js";
 
 const UnlockInputSchema = z.object({
   masterKey: z.string().min(MASTER_KEY_MIN_LENGTH).max(4096),
@@ -65,6 +72,7 @@ export interface DashboardServerOptions {
   paperTrading?: PaperTradingService;
   risk?: RiskService;
   execution?: AssistedLiveService;
+  protection?: ProtectionService;
 }
 
 class HttpError extends Error {
@@ -204,6 +212,7 @@ async function handleApiRequest(
   paperTrading: PaperTradingService | undefined,
   risk: RiskService | undefined,
   execution: AssistedLiveService | undefined,
+  protection: ProtectionService | undefined,
 ): Promise<boolean> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "127.0.0.1"}`);
   const method = request.method ?? "GET";
@@ -215,6 +224,8 @@ async function handleApiRequest(
     "/api/v1/live/preview",
     "/api/v1/live/confirm",
     "/api/v1/live/reconcile",
+    "/api/v1/protection/preview",
+    "/api/v1/protection/confirm",
   ].includes(url.pathname);
   requireSameOrigin(request, requiresLiveOrigin);
 
@@ -302,6 +313,48 @@ async function handleApiRequest(
       sendJson(response, 200, await execution.reconcile(input.attemptId));
     } finally {
       clearStringFields(raw);
+    }
+    return true;
+  }
+
+  if (method === "GET" && url.pathname === "/api/v1/protection/state") {
+    sendJson(response, 200, ProtectionRuntimeStateSchema.parse(protection?.getState() ?? {
+      status: "NONE",
+      provider: "FIXTURE",
+      activePreview: null,
+      activePlan: null,
+      lastPlan: null,
+      reasons: [],
+      updatedAt: new Date().toISOString(),
+    }));
+    return true;
+  }
+
+  if (method === "POST" && url.pathname === "/api/v1/protection/preview") {
+    const raw = await readJson(request);
+    try {
+      const input = parseRequestBody(ProtectionIntentSchema, raw);
+      if (!protection) throw new ProtectionServiceError("PROTECTION_PROVIDER_DISABLED", 503);
+      sendJson(response, 200, protection.createPreview(input));
+    } finally {
+      clearStringFields(raw);
+    }
+    return true;
+  }
+
+  if (method === "POST" && url.pathname === "/api/v1/protection/confirm") {
+    const raw = await readJson(request);
+    let input: z.infer<typeof ProtectionConfirmationInputSchema> | null = null;
+    try {
+      input = parseRequestBody(ProtectionConfirmationInputSchema, raw);
+      if (!protection) throw new ProtectionServiceError("PROTECTION_PROVIDER_DISABLED", 503);
+      sendJson(response, 200, await protection.confirm(input));
+    } finally {
+      clearStringFields(raw);
+      if (input) {
+        input.previewId = "";
+        input.confirmationToken = "";
+      }
     }
     return true;
   }
@@ -574,6 +627,7 @@ function initialEvents(
   paperTrading?: PaperTradingService,
   risk?: RiskService,
   execution?: AssistedLiveService,
+  protection?: ProtectionService,
 ): DashboardEvent[] {
   const now = new Date().toISOString();
   const latest = futuresRead?.getLatestSnapshot();
@@ -634,6 +688,20 @@ function initialEvents(
     );
   }
   proposed.push(
+    {
+      version: 1,
+      type: "protection.state",
+      timestamp: now,
+      payload: ProtectionRuntimeStateSchema.parse(protection?.getState() ?? {
+        status: "NONE",
+        provider: "FIXTURE",
+        activePreview: null,
+        activePlan: null,
+        lastPlan: null,
+        reasons: [],
+        updatedAt: now,
+      }),
+    },
     { version: 1, type: "paper.state", timestamp: now, payload: paperTrading?.getState() ?? createIdlePaperTradingState(now) },
     { version: 1, type: "scheduler.plan", timestamp: now, payload: snapshot.scheduler },
     { version: 1, type: "system.log", timestamp: now, payload: snapshot.logs[0] },
@@ -664,6 +732,7 @@ export function createDashboardServer(options: DashboardServerOptions): Server {
           options.paperTrading,
           options.risk,
           options.execution,
+          options.protection,
         );
         if (!handled) await serveStatic(request, response, options.staticRoot, loopbackHost);
         if (!handled && !response.writableEnded) sendJson(response, 404, { error: "Not found." });
@@ -672,6 +741,8 @@ export function createDashboardServer(options: DashboardServerOptions): Server {
         if (error instanceof HttpError) {
           sendJson(response, error.status, { error: error.publicMessage });
         } else if (error instanceof AssistedExecutionError) {
+          sendJson(response, error.status, { error: error.code });
+        } else if (error instanceof ProtectionServiceError) {
           sendJson(response, error.status, { error: error.code });
         } else if (error instanceof VaultUnlockError) {
           sendJson(response, 401, { error: "Unable to unlock the credential vault." });
@@ -703,7 +774,7 @@ export function createDashboardServer(options: DashboardServerOptions): Server {
     const unsubscribe = options.events.subscribe((event) => {
       if (webSocket.readyState === WebSocket.OPEN) webSocket.send(JSON.stringify(event));
     });
-    for (const event of initialEvents(options.auth.getState(), startedAt, options.futuresRead, options.paperTrading, options.risk, options.execution)) {
+    for (const event of initialEvents(options.auth.getState(), startedAt, options.futuresRead, options.paperTrading, options.risk, options.execution, options.protection)) {
       webSocket.send(JSON.stringify(event));
     }
     webSocket.on("message", () => webSocket.close(1008, "Read-only event stream."));

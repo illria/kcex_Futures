@@ -13,6 +13,12 @@ import {
   TradeClosedPayloadSchema,
   TradeOpenedPayloadSchema,
 } from "./paper-trading.js";
+import {
+  ProtectionPlanSchema,
+  ProtectionRuntimeStateSchema,
+  ProtectionTriggeredEventPayloadSchema,
+  ProtectionUnknownEventPayloadSchema,
+} from "./protection.js";
 
 export const MASTER_KEY_MIN_LENGTH = 12;
 
@@ -300,6 +306,10 @@ export const DashboardEventSchema = z.discriminatedUnion("type", [
   z.object({ ...EventMetaSchema, type: z.literal("execution.confirming"), payload: ExecutionConfirmingPayloadSchema }).strict(),
   z.object({ ...EventMetaSchema, type: z.literal("execution.confirmed"), payload: ExecutionConfirmedPayloadSchema }).strict(),
   z.object({ ...EventMetaSchema, type: z.literal("execution.unknown"), payload: ExecutionUnknownPayloadSchema }).strict(),
+  z.object({ ...EventMetaSchema, type: z.literal("protection.state"), payload: ProtectionRuntimeStateSchema }).strict(),
+  z.object({ ...EventMetaSchema, type: z.literal("protection.activated"), payload: ProtectionPlanSchema }).strict(),
+  z.object({ ...EventMetaSchema, type: z.literal("protection.triggered"), payload: ProtectionTriggeredEventPayloadSchema }).strict(),
+  z.object({ ...EventMetaSchema, type: z.literal("protection.unknown"), payload: ProtectionUnknownEventPayloadSchema }).strict(),
   z.object({
     ...EventMetaSchema,
     type: z.literal("risk.blocked"),
