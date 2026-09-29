@@ -6,6 +6,7 @@ import { z } from "zod";
 import { readDashboardPort } from "../../../../packages/shared/src/dashboard-config.js";
 import {
   createDashboardSnapshot,
+  createExecutionStatePlaceholder,
   createFakeDashboardSnapshot,
   createFakeFuturesSnapshot,
   createRiskStatePlaceholder,
@@ -24,6 +25,14 @@ import {
 } from "../../../../packages/shared/src/storage.js";
 import { createIdlePaperTradingState, PaperTradingStateSchema } from "../../../../packages/shared/src/paper-trading.js";
 import { RiskStateSchema } from "../../../../packages/shared/src/risk.js";
+import {
+  AssistedExecutionStateSchema,
+  ExecutionArmInputSchema,
+  ExecutionConfirmInputSchema,
+  ExecutionDisarmInputSchema,
+  ExecutionPreviewInputSchema,
+  ExecutionPreviewResponseSchema,
+} from "../../../../packages/shared/src/execution.js";
 import { AuthService } from "../auth/auth-service.js";
 import { EventBus } from "../realtime/event-bus.js";
 import { EncryptedCredentialVault, VaultLockedError, VaultUnlockError } from "../vault/encrypted-vault.js";
@@ -31,6 +40,8 @@ import type { FuturesReadService } from "../futures/futures-read-service.js";
 import type { StorageService } from "../storage/storage-service.js";
 import type { PaperTradingService } from "../trading/paper-trading-service.js";
 import type { RiskService } from "../risk/risk-service.js";
+import type { AssistedLiveService } from "../execution/assisted-live-service.js";
+import { AssistedExecutionError } from "../execution/execution-errors.js";
 
 const UnlockInputSchema = z.object({
   masterKey: z.string().min(MASTER_KEY_MIN_LENGTH).max(4096),
@@ -52,6 +63,7 @@ export interface DashboardServerOptions {
   storage?: StorageService;
   paperTrading?: PaperTradingService;
   risk?: RiskService;
+  execution?: AssistedLiveService;
 }
 
 class HttpError extends Error {
@@ -156,9 +168,12 @@ function requireLoopbackHost(request: IncomingMessage): string {
   }
 }
 
-function requireSameOrigin(request: IncomingMessage): void {
+function requireSameOrigin(request: IncomingMessage, originRequired = false): void {
   const rawOrigin = request.headers.origin;
-  if (!rawOrigin) return;
+  if (!rawOrigin) {
+    if (originRequired) throw new HttpError(403, "Request origin is required.");
+    return;
+  }
   const host = request.headers.host;
   if (!host) throw new HttpError(403, "Request origin is not allowed.");
   try {
@@ -187,12 +202,19 @@ async function handleApiRequest(
   storage: StorageService | undefined,
   paperTrading: PaperTradingService | undefined,
   risk: RiskService | undefined,
+  execution: AssistedLiveService | undefined,
 ): Promise<boolean> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "127.0.0.1"}`);
   const method = request.method ?? "GET";
 
   if (!url.pathname.startsWith("/api/")) return false;
-  requireSameOrigin(request);
+  const requiresLiveOrigin = method === "POST" && [
+    "/api/v1/live/arm",
+    "/api/v1/live/disarm",
+    "/api/v1/live/preview",
+    "/api/v1/live/confirm",
+  ].includes(url.pathname);
+  requireSameOrigin(request, requiresLiveOrigin);
 
   if (method === "GET" && url.pathname === "/api/v1/auth/state") {
     sendJson(response, 200, auth.getState());
@@ -204,6 +226,69 @@ async function handleApiRequest(
       ? await risk.refresh()
       : createRiskStatePlaceholder(new Date().toISOString());
     sendJson(response, 200, RiskStateSchema.parse(riskState));
+    return true;
+  }
+
+  if (method === "GET" && url.pathname === "/api/v1/live/state") {
+    sendJson(response, 200, AssistedExecutionStateSchema.parse(execution?.getState() ?? createExecutionStatePlaceholder()));
+    return true;
+  }
+
+  if (method === "POST" && url.pathname === "/api/v1/live/arm") {
+    const raw = await readJson(request);
+    try {
+      const input = parseRequestBody(ExecutionArmInputSchema, raw);
+      if (!execution) throw new AssistedExecutionError("EXECUTION_PROVIDER_DISABLED", 503);
+      sendJson(response, 200, execution.armRuntime(input.acknowledgement));
+    } finally {
+      clearStringFields(raw);
+    }
+    return true;
+  }
+
+  if (method === "POST" && url.pathname === "/api/v1/live/disarm") {
+    const raw = await readJson(request);
+    try {
+      parseRequestBody(ExecutionDisarmInputSchema, raw);
+      if (!execution) throw new AssistedExecutionError("EXECUTION_PROVIDER_DISABLED", 503);
+      sendJson(response, 200, execution.disarm());
+    } finally {
+      clearStringFields(raw);
+    }
+    return true;
+  }
+
+  if (method === "POST" && url.pathname === "/api/v1/live/preview") {
+    const raw = await readJson(request);
+    try {
+      const input = parseRequestBody(ExecutionPreviewInputSchema, raw);
+      if (!execution) throw new AssistedExecutionError("EXECUTION_PROVIDER_DISABLED", 503);
+      const result = execution.createPreview(input);
+      sendJson(response, 200, ExecutionPreviewResponseSchema.parse({
+        preview: result.preview,
+        confirmationToken: result.confirmationToken,
+        state: result.state,
+      }));
+    } finally {
+      clearStringFields(raw);
+    }
+    return true;
+  }
+
+  if (method === "POST" && url.pathname === "/api/v1/live/confirm") {
+    const raw = await readJson(request);
+    let input: { previewId: string; confirmationToken: string } | null = null;
+    try {
+      input = parseRequestBody(ExecutionConfirmInputSchema, raw);
+      if (!execution) throw new AssistedExecutionError("EXECUTION_PROVIDER_DISABLED", 503);
+      sendJson(response, 200, await execution.confirm(input));
+    } finally {
+      clearStringFields(raw);
+      if (input) {
+        input.previewId = "";
+        input.confirmationToken = "";
+      }
+    }
     return true;
   }
 
@@ -285,6 +370,7 @@ async function handleApiRequest(
       ...baseSnapshot,
       status: { ...baseSnapshot.status, killSwitch: riskState.killSwitch },
       risk: riskState,
+      execution: execution?.getState() ?? createExecutionStatePlaceholder(),
       paper: paperTrading?.getState() ?? createIdlePaperTradingState(new Date().toISOString()),
       history,
     });
@@ -473,6 +559,7 @@ function initialEvents(
   futuresRead?: FuturesReadService,
   paperTrading?: PaperTradingService,
   risk?: RiskService,
+  execution?: AssistedLiveService,
 ): DashboardEvent[] {
   const now = new Date().toISOString();
   const latest = futuresRead?.getLatestSnapshot();
@@ -485,6 +572,7 @@ function initialEvents(
   const proposed: unknown[] = [
     { version: 1, type: "auth.state", timestamp: now, payload: authState },
     { version: 1, type: "risk.state", timestamp: now, payload: RiskStateSchema.parse(risk?.getState() ?? createRiskStatePlaceholder(now)) },
+    { version: 1, type: "execution.state", timestamp: now, payload: AssistedExecutionStateSchema.parse(execution?.getState() ?? createExecutionStatePlaceholder(now)) },
   ];
   if (canSendFinancial) {
     if (isKcex && latest) {
@@ -561,6 +649,7 @@ export function createDashboardServer(options: DashboardServerOptions): Server {
           options.storage,
           options.paperTrading,
           options.risk,
+          options.execution,
         );
         if (!handled) await serveStatic(request, response, options.staticRoot, loopbackHost);
         if (!handled && !response.writableEnded) sendJson(response, 404, { error: "Not found." });
@@ -568,6 +657,8 @@ export function createDashboardServer(options: DashboardServerOptions): Server {
         if (response.headersSent || response.writableEnded) return;
         if (error instanceof HttpError) {
           sendJson(response, error.status, { error: error.publicMessage });
+        } else if (error instanceof AssistedExecutionError) {
+          sendJson(response, error.status, { error: error.code });
         } else if (error instanceof VaultUnlockError) {
           sendJson(response, 401, { error: "Unable to unlock the credential vault." });
         } else if (error instanceof VaultLockedError) {
@@ -598,7 +689,7 @@ export function createDashboardServer(options: DashboardServerOptions): Server {
     const unsubscribe = options.events.subscribe((event) => {
       if (webSocket.readyState === WebSocket.OPEN) webSocket.send(JSON.stringify(event));
     });
-    for (const event of initialEvents(options.auth.getState(), startedAt, options.futuresRead, options.paperTrading, options.risk)) {
+    for (const event of initialEvents(options.auth.getState(), startedAt, options.futuresRead, options.paperTrading, options.risk, options.execution)) {
       webSocket.send(JSON.stringify(event));
     }
     webSocket.on("message", () => webSocket.close(1008, "Read-only event stream."));

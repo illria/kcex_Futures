@@ -44,7 +44,7 @@ export const RiskLimitsSchema = z.object({
 export type RiskLimits = z.infer<typeof RiskLimitsSchema>;
 
 export const RiskContextSchema = z.object({
-  liveTrading: z.literal(false),
+  liveTrading: z.boolean(),
   killSwitch: KillSwitchStatusSchema,
   storageStatus: z.enum(["READY", "DEGRADED"]),
   positionState: RiskPositionStateSchema,
@@ -60,7 +60,7 @@ const utcDateKeySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) 
 });
 
 export const RiskMetricsSchema = z.object({
-  mode: z.literal("PAPER"),
+  mode: z.enum(["PAPER", "LIVE"]),
   dateKey: utcDateKeySchema,
   dailyOpenedTrades: z.number().int().nonnegative().nullable(),
   dailyRealizedLossUsdt: z.number().finite().nonnegative().nullable(),

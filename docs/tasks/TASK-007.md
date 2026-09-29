@@ -1,6 +1,6 @@
 # TASK-007 — RiskEngine + Kill Switch
 
-Status: REVIEW READY
+Status: COMPLETE
 
 ## Objective
 
@@ -32,8 +32,9 @@ Default ceilings:
 | `RISK_MAX_CONSECUTIVE_FAILURES` | 3 |
 
 Each environment value may lower its ceiling but cannot raise it. Risk checks
-allow only `GPS_USDT`. `LIVE` intents always block with
-`LIVE_TRADING_DISABLED`; `LIVE_TRADING` remains forced to `false`.
+allow only `GPS_USDT`. In TASK-007, `LIVE_TRADING` remains forced to `false`.
+TASK-008 adds an explicit runtime context for its fixture-only path; it does not
+turn the environment flag on or enable a KCEX execution provider.
 
 Ordinary entry rule violations produce `BLOCKED`. Unreliable or hard-stop
 conditions produce `HALTED`: unknown position, engaged or unknown Kill Switch,
@@ -132,11 +133,13 @@ or access a real KCEX account.
 
 ## Acceptance criteria
 
-- Pure RiskEngine boundary, multi-reason, fail-closed, and LIVE-block tests pass.
+- Pure RiskEngine boundary, multi-reason, fail-closed, and runtime-gated LIVE
+  context tests pass.
 - Kill Switch file, directory, symlink, missing, and filesystem error cases pass.
 - UTC bounded daily count/loss queries and failure recovery tests pass.
 - Paper block leaves the planned record unchanged; switch clear allows the same
   plan to open after refresh; mark/close/recovery remain usable when halted.
 - Risk API and WebSocket expose validated read-only state; Dashboard renders it.
-- CI is green. TASK-006 is marked COMPLETE; TASK-007 is REVIEW READY only after
-  PR CI passes. TASK-008 remains PLANNED and this PR is not merged here.
+- TASK-006 and TASK-007 are COMPLETE. TASK-007 merge commit is
+  `4aa21ad4242e5269fce31179012c9f9d8598ed6b`; TASK-008 has its own scope and
+  does not add a real KCEX write provider.

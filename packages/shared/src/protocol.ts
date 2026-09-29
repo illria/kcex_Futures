@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { StorageStatusSchema, TradeHistoryEntrySchema } from "./storage.js";
 import { KillSwitchStatusSchema, RiskReasonCodeSchema, RiskStateSchema } from "./risk.js";
+import { AssistedExecutionStateSchema, ExecutionSubmittedPayloadSchema } from "./execution.js";
 import {
   PaperTradingStateSchema,
   TradeClosedPayloadSchema,
@@ -226,6 +227,7 @@ export const DashboardSnapshotSchema = z
     scheduler: SchedulerPlanSchema,
     paper: PaperTradingStateSchema,
     risk: RiskStateSchema,
+    execution: AssistedExecutionStateSchema,
     history: z.array(TradeHistoryEntrySchema).max(100),
     logs: z.array(RuntimeLogSchema).max(100),
   })
@@ -287,6 +289,8 @@ export const DashboardEventSchema = z.discriminatedUnion("type", [
   z.object({ ...EventMetaSchema, type: z.literal("scheduler.plan"), payload: SchedulerPlanSchema }).strict(),
   z.object({ ...EventMetaSchema, type: z.literal("paper.state"), payload: PaperTradingStateSchema }).strict(),
   z.object({ ...EventMetaSchema, type: z.literal("risk.state"), payload: RiskStateSchema }).strict(),
+  z.object({ ...EventMetaSchema, type: z.literal("execution.state"), payload: AssistedExecutionStateSchema }).strict(),
+  z.object({ ...EventMetaSchema, type: z.literal("execution.submitted"), payload: ExecutionSubmittedPayloadSchema }).strict(),
   z.object({
     ...EventMetaSchema,
     type: z.literal("risk.blocked"),

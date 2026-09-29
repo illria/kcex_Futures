@@ -12,6 +12,19 @@ import type { StorageStatus } from "./storage.js";
 import { assertFuturesSourceConsistency } from "./futures-invariants.js";
 import { createIdlePaperTradingState } from "./paper-trading.js";
 import { DEFAULT_RISK_LIMITS, RiskStateSchema } from "./risk.js";
+import { AssistedExecutionStateSchema } from "./execution.js";
+
+export function createExecutionStatePlaceholder(now = new Date().toISOString()) {
+  return AssistedExecutionStateSchema.parse({
+    status: "DISARMED",
+    provider: "DISABLED",
+    armedUntil: null,
+    activePreview: null,
+    lastSubmission: null,
+    reasons: [],
+    updatedAt: now,
+  });
+}
 
 export function createFakeFuturesSnapshot(now = new Date().toISOString()): KcexFuturesSnapshot {
   const market: MarketSnapshot = {
@@ -140,6 +153,7 @@ export function createDashboardSnapshot(
     },
     paper: createIdlePaperTradingState(now),
     risk: createRiskStatePlaceholder(now),
+    execution: createExecutionStatePlaceholder(now),
     history: [],
     logs: [
       {

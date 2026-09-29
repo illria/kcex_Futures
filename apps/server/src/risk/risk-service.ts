@@ -77,9 +77,13 @@ export class RiskService {
     return this.getState();
   }
 
-  async evaluatePreTrade(intent: RiskTradeIntent): Promise<RiskDecision> {
+  async evaluatePreTrade(
+    intent: RiskTradeIntent,
+    options: { liveTrading?: boolean; positionState?: RiskContext["positionState"] } = {},
+  ): Promise<RiskDecision> {
     if (!this.initialized) await this.initialize();
-    const snapshot = await this.readContext();
+    const snapshot = await this.readContext(intent.mode, options.positionState);
+    snapshot.context.liveTrading = intent.mode === "LIVE" && options.liveTrading === true;
     const decision = evaluateRisk(intent, snapshot.context, this.limits, this.timestamp());
     this.replaceState(this.stateFromDecision(decision, snapshot.context.killSwitch, snapshot.metrics));
 
@@ -89,7 +93,7 @@ export class RiskService {
           category: "RISK",
           eventType: "RISK_BLOCKED",
           severity: "WARN",
-          message: "Paper entry blocked by risk policy.",
+          message: "Trade entry blocked by risk policy.",
           payload: {
             mode: intent.mode,
             symbol: intent.symbol,
@@ -182,27 +186,32 @@ export class RiskService {
     this.consecutiveFailures = count;
   }
 
-  private async readContext(): Promise<RiskReadContext> {
+  private async readContext(
+    mode: RiskMetrics["mode"] = "PAPER",
+    livePositionState?: RiskContext["positionState"],
+  ): Promise<RiskReadContext> {
     const now = this.clockNow();
     const dateKey = now.toISOString().slice(0, 10);
     const startAt = `${dateKey}T00:00:00.000Z`;
     const endAt = new Date(Date.parse(startAt) + 24 * 60 * 60 * 1000).toISOString();
     const killSwitch = await this.options.killSwitch.getStatus();
     let storageStatus: "READY" | "DEGRADED" = "DEGRADED";
-    let positionState: RiskContext["positionState"] = "UNKNOWN";
+    let positionState: RiskContext["positionState"] = mode === "LIVE" ? livePositionState ?? "UNKNOWN" : "UNKNOWN";
     let dailyOpenedTrades: number | null = null;
     let dailyRealizedLossUsdt: number | null = null;
 
     try {
       storageStatus = this.options.storage.getHealth().status;
       if (storageStatus === "READY") {
-        const openTrades = this.options.storage.trades.listOpenPaperTrades({ symbol: "GPS_USDT", limit: 2 });
-        positionState = openTrades.length === 0 ? "FLAT" : openTrades.length === 1 ? "OPEN" : "UNKNOWN";
+        if (mode === "PAPER") {
+          const openTrades = this.options.storage.trades.listOpenPaperTrades({ symbol: "GPS_USDT", limit: 2 });
+          positionState = openTrades.length === 0 ? "FLAT" : openTrades.length === 1 ? "OPEN" : "UNKNOWN";
+        }
         dailyOpenedTrades = this.options.storage.trades.countOpenedTrades({
-          mode: "PAPER", symbol: "GPS_USDT", startAt, endAt,
+          mode, symbol: "GPS_USDT", startAt, endAt,
         });
         dailyRealizedLossUsdt = this.options.storage.trades.sumRealizedLossUsdt({
-          mode: "PAPER", symbol: "GPS_USDT", startAt, endAt,
+          mode, symbol: "GPS_USDT", startAt, endAt,
         });
       }
     } catch {
@@ -223,7 +232,7 @@ export class RiskService {
       consecutiveFailures,
     };
     const metrics: RiskMetrics = {
-      mode: "PAPER",
+      mode,
       dateKey,
       dailyOpenedTrades: context.dailyOpenedTrades,
       dailyRealizedLossUsdt: context.dailyRealizedLossUsdt,
@@ -234,7 +243,7 @@ export class RiskService {
 
   private stateFor(context: RiskContext, metrics: RiskMetrics): RiskState {
     const decision = evaluateRisk({
-      mode: "PAPER",
+      mode: metrics.mode,
       symbol: "GPS_USDT",
       side: "LONG",
       marginUsdt: this.limits.maxMarginUsdt,

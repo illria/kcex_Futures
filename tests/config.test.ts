@@ -9,7 +9,13 @@ describe("Task 001 configuration", () => {
     expect(config.BROWSER_HEADLESS).toBe(false);
     expect(config.AUTH_PROVIDER).toBe("FAKE");
     expect(config.LIVE_TRADING).toBe(false);
+    expect(config.LIVE_EXECUTION_PROVIDER).toBe("DISABLED");
     expect(config.PAPER_FEE_RATE).toBe(0);
+  });
+
+  it("accepts fixture execution for CI and rejects an unsupported KCEX writer", () => {
+    expect(loadConfig({ LIVE_EXECUTION_PROVIDER: "FIXTURE" }, () => undefined).LIVE_EXECUTION_PROVIDER).toBe("FIXTURE");
+    expect(() => loadConfig({ LIVE_EXECUTION_PROVIDER: "KCEX" }, () => undefined)).toThrow();
   });
 
   it("accepts only a bounded finite simulated paper fee rate", () => {

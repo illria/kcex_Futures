@@ -20,6 +20,7 @@ jobs:
     timeout-minutes: 15
     env:
       LIVE_TRADING: "false"
+      LIVE_EXECUTION_PROVIDER: "FIXTURE"
       AUTH_PROVIDER: "FAKE"
       KCEX_READONLY_ENABLED: "false"
       PAPER_FEE_RATE: "0"
@@ -86,6 +87,7 @@ jobs:
     timeout-minutes: 15
     env:
       LIVE_TRADING: "false"
+      LIVE_EXECUTION_PROVIDER: "FIXTURE"
       AUTH_PROVIDER: "FAKE"
       KCEX_READONLY_ENABLED: "false"
       PAPER_FEE_RATE: "0"
@@ -126,6 +128,7 @@ jobs:
     timeout-minutes: 15
     env:
       LIVE_TRADING: "false"
+      LIVE_EXECUTION_PROVIDER: "FIXTURE"
       AUTH_PROVIDER: "FAKE"
       KCEX_READONLY_ENABLED: "false"
       PAPER_FEE_RATE: "0"

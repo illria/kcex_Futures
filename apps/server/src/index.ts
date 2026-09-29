@@ -14,6 +14,10 @@ import { DatabaseSchemaTooNewError } from "./storage/storage-errors.js";
 import { PaperTradingService } from "./trading/paper-trading-service.js";
 import { KillSwitchService } from "./risk/kill-switch.js";
 import { RiskService } from "./risk/risk-service.js";
+import { AssistedLiveService } from "./execution/assisted-live-service.js";
+import { FixtureExecutionAdapter } from "./execution/fixture-execution-adapter.js";
+import { DisabledKcexExecutionAdapter } from "./execution/disabled-kcex-execution-adapter.js";
+import { FixtureExecutionPositionSource } from "./execution/execution-position-source.js";
 import { logger } from "../../../src/logging/logger.js";
 import { loadConfig } from "../../../src/config/schema.js";
 
@@ -65,6 +69,17 @@ async function startServer(): Promise<void> {
     logger.error({ errorCode: "PAPER_STATE_RECOVERY_CONFLICT" }, "Paper trading recovery halted safely.");
   }
   await risk.refresh();
+  const executionAdapter = config.LIVE_EXECUTION_PROVIDER === "FIXTURE"
+    ? new FixtureExecutionAdapter()
+    : new DisabledKcexExecutionAdapter();
+  const execution = new AssistedLiveService({
+    provider: config.LIVE_EXECUTION_PROVIDER,
+    adapter: executionAdapter,
+    storage,
+    risk,
+    events,
+    positionSource: new FixtureExecutionPositionSource(config.LIVE_EXECUTION_PROVIDER === "FIXTURE" ? "FLAT" : "UNKNOWN"),
+  });
   const adapter = config.AUTH_PROVIDER === "KCEX"
     ? new KcexAuthAdapter({ baseUrl: config.KCEX_BASE_URL, headless: config.BROWSER_HEADLESS })
     : new FakeAuthAdapter();
@@ -101,6 +116,7 @@ async function startServer(): Promise<void> {
     futuresRead,
     paperTrading,
     risk,
+    execution,
   });
 
   const heartbeat = setInterval(() => {
@@ -123,6 +139,7 @@ async function startServer(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     clearInterval(heartbeat);
+    execution.close();
     unsubscribeAuthEvents?.();
     void (async () => {
       await paperTrading.close();

@@ -50,6 +50,14 @@ describe("pure RiskEngine", () => {
     expect(result.reasons).toContain(reason);
   });
 
+  it("allows a LIVE intent only when runtime context explicitly enables it, then applies the same guards", () => {
+    expect(decide({ mode: "LIVE" }, { liveTrading: true })).toMatchObject({ allowed: true, status: "READY", reasons: [] });
+    expect(decide({ mode: "LIVE" }, { liveTrading: true, positionState: "OPEN" }))
+      .toMatchObject({ allowed: false, status: "BLOCKED", reasons: ["POSITION_OPEN"] });
+    expect(decide({ mode: "LIVE" }, { liveTrading: true, killSwitch: "ENGAGED" }))
+      .toMatchObject({ allowed: false, status: "HALTED", reasons: ["KILL_SWITCH_ENGAGED"] });
+  });
+
   const contextCases: Array<[Partial<RiskContext>, RiskStatus, RiskReasonCode | undefined]> = [
     [{ positionState: "OPEN" as const }, "BLOCKED", "POSITION_OPEN"],
     [{ positionState: "UNKNOWN" as const }, "HALTED", "POSITION_UNKNOWN"],
