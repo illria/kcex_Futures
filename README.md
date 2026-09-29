@@ -153,11 +153,13 @@ Paper Trading Lifecycle
 TASK-007
 RiskEngine
         ↓
-受控真实交易
+TASK-008
+人工授权门控的单次 Fixture Execution
         ↓
-TP / SL
+TASK-009
+Position Confirmation + UNKNOWN State
         ↓
-随机 1–10 单/天
+后续任务（尚未实现）
 ```
 
 任何阶段未验收，不进入下一阶段。
@@ -220,11 +222,17 @@ TASK-006 在 TASK-005 SQLite records 上实现确定性的本地 Paper 生命周
 
 ## TASK-007 RiskEngine + Kill Switch
 
-当前状态：IN PROGRESS。
+当前状态：COMPLETE，已合并到 main（`4aa21ad4242e5269fce31179012c9f9d8598ed6b`）。
 
 TASK-007 为 GPS_USDT Paper entry 增加始终启用的纯规则 RiskEngine、只读文件 Kill Switch、UTC 日计数与已实现 gross loss 限制、连续执行失败审计恢复，以及 Dashboard 风险面板和只读 `GET /api/v1/risk/state`。默认安全上限为 50 USDT margin、10x leverage、每日 10 次、每日 gross realized loss 50 USDT、连续失败 3 次；配置只能调低上限。
 
 Kill Switch 只阻止新 Paper entry；已有 Paper position 仍可 mark、close 和 recovery。Risk API 不提供写接口，不增加数据库迁移，不连接 KCEX，不自动交易。`LIVE_TRADING=false` 持续强制关闭。验收和范围见 [docs/tasks/TASK-007.md](docs/tasks/TASK-007.md)。
+
+## TASK-008 Assisted Single Live Order Flow
+
+当前阶段：fixture-only execution architecture。后端默认 `LIVE_EXECUTION_PROVIDER=DISABLED`；CI 显式使用 `FIXTURE`。页面提供短时 runtime arm、不可变预览、单次人工确认、RiskEngine precheck、single-flight 提交状态和审计事件。Fixture 的 `SUBMITTED` 只表示 fixture adapter 接受了一次提交动作，不代表订单成交或仓位已确认。
+
+本阶段没有真实 KCEX order adapter、KCEX mutation selector、订单按钮操作或真实下单。Dashboard 明确显示 `REAL KCEX EXECUTION DISABLED` 与 `FIXTURE SUBMISSION ONLY · NO KCEX ORDER`。真实 KCEX mutation 仍需平台授权，并等待人工验证页面、合约数量语义、逐仓与杠杆控件及单独安全审核。TASK-009 的仓位/成交确认、UNKNOWN reconciliation、自动重试、TP/SL、scheduler 和随机交易都未实现。详见 [docs/tasks/TASK-008.md](docs/tasks/TASK-008.md)。
 
 ## 推荐技术栈
 

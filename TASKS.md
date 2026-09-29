@@ -59,17 +59,26 @@ Spec: [docs/tasks/TASK-006.md](docs/tasks/TASK-006.md)
 - read-only Paper state API, WebSocket state, and separate Dashboard panel
 - merged to main; no scheduler, KCEX mutation, or live trading
 
-## Review Ready
-
 ### TASK-007 — RiskEngine + Kill Switch
 
-Status: REVIEW READY
+Status: COMPLETE
 
 Spec: [docs/tasks/TASK-007.md](docs/tasks/TASK-007.md)
 
-## Planned
+TASK-007 merge commit: `4aa21ad4242e5269fce31179012c9f9d8598ed6b`.
+
+## Review Ready
 
 ### TASK-008 — Assisted Single Live Order Flow
+
+Status: REVIEW READY
+
+Spec: [docs/tasks/TASK-008.md](docs/tasks/TASK-008.md)
+
+Current phase is fixture-only. Real KCEX order mutation remains disabled pending
+platform authorization and deferred manual verification.
+
+## Planned
 
 ### TASK-009 — Position Confirmation + UNKNOWN State
 

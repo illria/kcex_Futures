@@ -44,7 +44,7 @@ after its GitHub Actions acceptance checks passed.
 
 No KCEX order submission or real position mutation.
 
-## Phase 3 — TASK-007: RiskEngine + Kill Switch (review ready)
+## Phase 3 — TASK-007: RiskEngine + Kill Switch (complete)
 
 - symbol whitelist and bounded margin/leverage rules
 - open-position, daily-count, failure, and loss limits
@@ -52,12 +52,17 @@ No KCEX order submission or real position mutation.
 - unknown state fails closed
 
 See [docs/tasks/TASK-007.md](docs/tasks/TASK-007.md) for limits, integration,
-audit, API, Dashboard, and acceptance requirements. TASK-008 remains planned.
+audit, API, Dashboard, and acceptance requirements. TASK-007 was merged at
+`4aa21ad4242e5269fce31179012c9f9d8598ed6b`.
 
-## Phase 4 — TASK-008: Assisted Single Live Order Flow (planned)
+## Phase 4 — TASK-008: Assisted Single Live Order Flow (review ready)
 
-Only after explicit user approval and review of earlier tasks. This phase requires
-a separate safety review and later manual verification. It is not part of TASK-005.
+This phase builds only the authorization-gated fixture execution path: runtime
+arm, immutable preview, explicit single confirmation, RiskEngine precheck,
+single-flight execution, audit, and local Dashboard/WebSocket state. The default
+provider is DISABLED; CI uses FIXTURE. Real KCEX mutation remains disabled,
+pending platform authorization, deferred manual verification, and a separate
+safety review. See [docs/tasks/TASK-008.md](docs/tasks/TASK-008.md).
 
 ## Phase 5 — TASK-009: Position Confirmation + UNKNOWN State (planned)
 

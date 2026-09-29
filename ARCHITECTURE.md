@@ -352,14 +352,60 @@ Successful KCEX login only enables read-only access.
 
 Live execution must separately require:
 
-- config allows live mode
+- a separately authorized execution provider; configuration alone is not authorization
 - explicit runtime arm
 - RiskEngine approval
-- correct symbol
-- correct leverage
-- correct isolated/cross mode
-- no unexpected existing position
-- sufficient balance
+- supported symbol and bounded intent
+- verified position evidence; UNKNOWN fails closed
+
+`LIVE_TRADING` stays `false` and cannot enable execution. TASK-008 permits only
+the `FIXTURE` provider through its runtime arm and RiskEngine gate. It has no
+KCEX write adapter, selector, browser interaction, or order request.
+
+### Assisted Execution Layer (TASK-008)
+
+The fixture-only path is deliberately separate from Paper lifecycle persistence
+and the KCEX read-only extractor:
+
+```text
+Human confirmation
+        ↓
+Runtime-only five-minute arm
+        ↓
+Immutable 60-second preview
+        ↓
+Single-use confirmation token
+        ↓
+RiskEngine precheck with explicit fixture position source
+        ↓
+Single-flight executor (one attempt, no retry)
+        ↓
+FixtureExecutionAdapter
+```
+
+The execution provider defaults to `DISABLED`; GitHub Actions selects
+`FIXTURE`. A confirmation consumes the arm and preview before precheck, so
+blocked and failed attempts cannot be replayed. `SUBMITTED` means only that the
+fixture adapter accepted one submission action. It never means fill or open
+position. TASK-009 owns position/fill confirmation and UNKNOWN reconciliation.
+
+Arm state, active preview, and confirmation token exist only in process memory
+and are never persisted to SQLite, JSON files, or Vault; restart always starts
+DISARMED. The local `execution.state` event carries status, arm expiry, and the
+active preview but never the confirmation token. The token is returned only in
+the preview HTTP response for its one confirmation and is excluded from logs
+and audit records. Audits record intent fields and reason codes only. There is
+no live trade record or schema migration.
+
+Real KCEX browser mutation remains disabled pending required platform
+authorization, authenticated manual page verification, verified contract-size
+semantics, verified isolated/leverage controls, and a separate safety review.
+Runtime arm is local intent and does not grant KCEX automation permission.
+
+The UI presents explicit LONG/SHORT selection and separate Arm, Preview, and
+Confirm actions. It displays the fixed MARKET/ISOLATED intent and clearly labels
+reference price as not a guaranteed fill price. There is no scheduler, random
+direction, automatic retry, position inference, TP, or SL in TASK-008.
 
 ### 6. Restart behavior
 
@@ -374,7 +420,7 @@ On every process restart:
 
 ## First-version scope
 
-Supported:
+Long-term proposed scope (not all implemented in TASK-008):
 
 - local dashboard on port 6666
 - encrypted credential vault

@@ -33,7 +33,7 @@ export function evaluateRisk(
     if (!reasons.includes(reason)) reasons.push(reason);
   };
 
-  if (intent.mode === "LIVE") add("LIVE_TRADING_DISABLED");
+  if (intent.mode === "LIVE" && !context.liveTrading) add("LIVE_TRADING_DISABLED");
   if (intent.symbol !== "GPS_USDT") add("SYMBOL_NOT_ALLOWED");
   if (intent.marginUsdt > limits.maxMarginUsdt) add("MARGIN_LIMIT");
   if (intent.leverage > limits.maxLeverage) add("LEVERAGE_LIMIT");

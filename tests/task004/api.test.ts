@@ -401,16 +401,16 @@ describe("TASK-004 read-only API boundaries", () => {
       socket.once("error", reject);
       socket.on("message", (message) => {
         eventsSeen.push(parseDashboardEvent(JSON.parse(message.toString())));
-        if (eventsSeen.length === 6) {
+        if (eventsSeen.length === 7) {
           socket.close();
           resolve(eventsSeen);
         }
       });
     });
     expect(received.map((event) => event.type)).toEqual([
-      "auth.state", "risk.state", "paper.state", "scheduler.plan", "system.log", "system.heartbeat",
+      "auth.state", "risk.state", "execution.state", "paper.state", "scheduler.plan", "system.log", "system.heartbeat",
     ]);
-    expect(received.some((event) => ["market.snapshot", "account.balance", "futures.contract", "position.changed", "orders.snapshot", "futures.read-health"].includes(event.type))).toBe(false);
+    expect(received.some((event) => ["futures.snapshot", "market.snapshot", "account.balance", "futures.contract", "position.changed", "orders.snapshot", "futures.read-health"].includes(event.type))).toBe(false);
   });
 
   it("keeps the dashboard placeholder explicit while KCEX has no first read", async () => {

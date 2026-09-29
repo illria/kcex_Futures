@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { isTrustedKcexBaseUrl } from "../kcex/trusted-host.js";
 import { DEFAULT_RISK_LIMITS, RiskLimitsSchema, type RiskLimits } from "../../packages/shared/src/risk.js";
+import { ExecutionProviderSchema, type ExecutionProvider } from "../../packages/shared/src/execution.js";
 
 const baseUrlSchema = z
   .string()
@@ -25,6 +26,7 @@ const environmentSchema = z.object({
   BROWSER_HEADLESS: z.enum(["true", "false"]).default("false"),
   BROWSER_PROFILE_DIR: z.string().trim().min(1).default("./data/browser-profile"),
   LIVE_TRADING: z.enum(["true", "false"]).default("false"),
+  LIVE_EXECUTION_PROVIDER: ExecutionProviderSchema.default("DISABLED"),
   KCEX_READONLY_ENABLED: z.enum(["true", "false"]).default("false"),
   KCEX_READ_POLL_MS: z.coerce.number().int().min(2_000).max(60_000).default(5_000),
   PAPER_FEE_RATE: z.coerce.number().finite().min(0).max(0.01).default(0),
@@ -43,6 +45,7 @@ export interface AppConfig {
   BROWSER_HEADLESS: boolean;
   BROWSER_PROFILE_DIR: string;
   LIVE_TRADING: false;
+  LIVE_EXECUTION_PROVIDER: ExecutionProvider;
   KCEX_READONLY_ENABLED: boolean;
   KCEX_READ_POLL_MS: number;
   PAPER_FEE_RATE: number;
@@ -74,6 +77,7 @@ export function loadConfig(
     BROWSER_HEADLESS: parsed.BROWSER_HEADLESS === "true",
     BROWSER_PROFILE_DIR: parsed.BROWSER_PROFILE_DIR,
     LIVE_TRADING: false,
+    LIVE_EXECUTION_PROVIDER: parsed.LIVE_EXECUTION_PROVIDER,
     KCEX_READONLY_ENABLED: parsed.KCEX_READONLY_ENABLED === "true",
     KCEX_READ_POLL_MS: parsed.KCEX_READ_POLL_MS,
     PAPER_FEE_RATE: parsed.PAPER_FEE_RATE,
