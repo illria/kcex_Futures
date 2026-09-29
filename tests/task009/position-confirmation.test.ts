@@ -87,7 +87,9 @@ describe("TASK-009 submission outcome and position confirmation", () => {
     try {
       const preview = await prepare(setup);
       const result = await setup.service.confirm({ previewId: preview.preview.previewId, confirmationToken: preview.confirmationToken });
-      expect(Date.parse(result.lastSubmission!.evidence!.observedAt) - Date.parse(preview.preview.createdAt)).toBe(16_000);
+      const observedAt = result.lastSubmission?.status === "CONFIRMED" ? result.lastSubmission.evidence.observedAt : null;
+      expect(observedAt).toBeTruthy();
+      expect(Date.parse(observedAt!) - Date.parse(preview.preview.createdAt)).toBe(16_000);
       expect(result.status).toBe("CONFIRMED");
       expect(setup.adapter.submitCalls).toBe(1);
     } finally { await setup.cleanup(); }
@@ -108,7 +110,8 @@ describe("TASK-009 submission outcome and position confirmation", () => {
       const preview = await prepare(setup);
       const result = await setup.service.confirm({ previewId: preview.preview.previewId, confirmationToken: preview.confirmationToken });
       expect(result.status).toBe("UNKNOWN");
-      expect(result.lastSubmission?.evidence?.kind).toBe("UNKNOWN");
+      if (result.lastSubmission?.status === "UNKNOWN") expect(result.lastSubmission.evidence?.kind).toBe("UNKNOWN");
+      else throw new Error("Expected the stale-evidence attempt summary to remain UNKNOWN.");
       expect(setup.adapter.submitCalls).toBe(1);
     } finally { await setup.cleanup(); }
   });

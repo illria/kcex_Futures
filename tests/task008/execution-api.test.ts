@@ -160,11 +160,15 @@ describe("TASK-008 loopback assisted-execution API", () => {
     }
     const reconciled = AssistedExecutionStateSchema.parse(await (await post("/api/v1/live/reconcile", { attemptId })).json());
     expect(reconciled.status).toBe("UNKNOWN");
-    expect(reconciled.lastSubmission?.evidence).toMatchObject({
-      kind: "UNKNOWN",
-      source: "FIXTURE",
-      reason: "SOURCE_UNAVAILABLE",
-    });
+    if (reconciled.lastSubmission?.status === "UNKNOWN") {
+      expect(reconciled.lastSubmission.evidence).toMatchObject({
+        kind: "UNKNOWN",
+        source: "FIXTURE",
+        reason: "SOURCE_UNAVAILABLE",
+      });
+    } else {
+      throw new Error("Expected the unresolved attempt summary to remain UNKNOWN.");
+    }
     expect(service.getState().status).toBe("UNKNOWN");
     expect(adapter.submitCalls).toBe(1);
   });
