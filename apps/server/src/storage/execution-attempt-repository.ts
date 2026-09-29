@@ -89,11 +89,8 @@ export class ExecutionAttemptRepository {
     try {
       this.database.prepare(`
         INSERT INTO execution_attempts (
-          attempt_id, preview_id, provider, symbol, side, margin_usdt, leverage, status,
-          fixture_submission_id, outcome, failure_kind, reason_code, evidence_json,
-          submitted_at, confirmation_started_at, confirmed_at, failed_at, unknown_at,
-          observed_side, observed_entry_price, observed_size, observed_at, created_at, updated_at, version
-        ) VALUES (?, ?, 'FIXTURE', ?, ?, ?, ?, 'SUBMITTING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+          attempt_id, preview_id, provider, symbol, side, margin_usdt, leverage, status, created_at, updated_at
+        ) VALUES (?, ?, 'FIXTURE', ?, ?, ?, ?, 'SUBMITTING', ?, ?)
       `).run(
         attemptId,
         input.previewId,
@@ -101,18 +98,6 @@ export class ExecutionAttemptRepository {
         input.side,
         input.marginUsdt,
         input.leverage,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
         timestamp,
         timestamp,
       );
