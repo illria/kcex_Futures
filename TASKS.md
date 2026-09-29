@@ -67,11 +67,11 @@ Spec: [docs/tasks/TASK-007.md](docs/tasks/TASK-007.md)
 
 TASK-007 merge commit: `4aa21ad4242e5269fce31179012c9f9d8598ed6b`.
 
-## In Progress
+## Review Ready
 
 ### TASK-008 — Assisted Single Live Order Flow
 
-Status: IN PROGRESS
+Status: REVIEW READY
 
 Spec: [docs/tasks/TASK-008.md](docs/tasks/TASK-008.md)
 

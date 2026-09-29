@@ -55,7 +55,7 @@ See [docs/tasks/TASK-007.md](docs/tasks/TASK-007.md) for limits, integration,
 audit, API, Dashboard, and acceptance requirements. TASK-007 was merged at
 `4aa21ad4242e5269fce31179012c9f9d8598ed6b`.
 
-## Phase 4 — TASK-008: Assisted Single Live Order Flow (in progress)
+## Phase 4 — TASK-008: Assisted Single Live Order Flow (review ready)
 
 This phase builds only the authorization-gated fixture execution path: runtime
 arm, immutable preview, explicit single confirmation, RiskEngine precheck,
