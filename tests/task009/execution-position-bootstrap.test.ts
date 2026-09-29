@@ -109,7 +109,7 @@ describe("TASK-009 restart-safe fixture position bootstrap", () => {
         confirmationToken: preview.confirmationToken,
       });
       expect(result.status).toBe("HALTED");
-      expect(result.reasons).toContain("POSITION_UNKNOWN");
+      expect(setup.risk.getState().reasons).toContain("POSITION_UNKNOWN");
       expect(setup.adapter.submitCalls).toBe(0);
     } finally {
       await setup.cleanup();

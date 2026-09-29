@@ -339,7 +339,15 @@ describe("TASK-008 assisted single submission service", () => {
   });
 
   it("resets failure accounting only after fixture position confirmation", async () => {
-    const value = await setup();
+    const value = await setup({ confirmationEvidence: [{
+      kind: "MATCHED_OPEN",
+      source: "FIXTURE",
+      symbol: "GPS_USDT",
+      side: "LONG",
+      entryPrice: 0.0123,
+      size: 1.25,
+      observedAt: "2026-09-29T12:00:00.000Z",
+    }] });
     await value.risk.recordExecutionFailure({ failureKind: "EXECUTION_FAILED" });
     const prepared = await armAndPreview(value.service);
     await value.service.confirm(confirmation(prepared.preview.previewId, prepared.confirmationToken));
