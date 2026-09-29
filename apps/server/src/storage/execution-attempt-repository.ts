@@ -285,7 +285,7 @@ function parseAttemptRow(row: RawRow): ExecutionAttemptRecord {
     throw new StorageDataIntegrityError("execution attempt");
   }
   const normalized = { ...row, evidence };
-  delete normalized.evidenceJson;
+  delete (normalized as RawRow).evidenceJson;
   const parsed = ExecutionAttemptRecordSchema.safeParse(normalized);
   if (!parsed.success) throw new StorageDataIntegrityError("execution attempt");
   return parsed.data;

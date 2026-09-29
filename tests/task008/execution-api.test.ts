@@ -128,7 +128,7 @@ describe("TASK-008 loopback assisted-execution API", () => {
   });
 
   it("offers same-origin read-only UNKNOWN reconciliation and no force-clear or retry route", async () => {
-    const { url, post, service, adapter } = await start({ adapterOptions: { resultMode: "THROW" } });
+    const { post, service, adapter } = await start({ adapterOptions: { resultMode: "THROW" } });
     await post("/api/v1/live/arm", { acknowledgement: "ARM ASSISTED LIVE EXECUTION" });
     const prepared = ExecutionPreviewResponseSchema.parse(await (await post("/api/v1/live/preview", {
       side: "LONG", marginUsdt: 50, leverage: 10,

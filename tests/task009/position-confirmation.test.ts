@@ -236,7 +236,7 @@ describe("TASK-009 submission outcome and position confirmation", () => {
     }
   });
 
-  it.each(["SUBMITTED", "CONFIRMING", "UNKNOWN"] as const)("recovers persisted %s without resubmitting", async (interruptedStatus) => {
+  it.each(["SUBMITTING", "SUBMITTED", "CONFIRMING", "UNKNOWN"] as const)("recovers persisted %s without resubmitting", async (interruptedStatus) => {
     const setup = await createTask008Setup();
     const attempt = setup.storage.executionAttempts.createSubmittingAttemptWithAudit({
       attemptId: "92000000-0000-4000-8000-000000000001",
