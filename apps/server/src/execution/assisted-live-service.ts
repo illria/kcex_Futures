@@ -237,7 +237,6 @@ export class AssistedLiveService {
     if (this.inFlight) throw new AssistedExecutionError("EXECUTION_BUSY");
     this.syncArmExpiry();
     this.assertFixtureProvider();
-    this.assertNoBlockingAttempt();
     if (!this.arm.isArmed()) throw new AssistedExecutionError("ARM_REQUIRED");
     const input = ExecutionConfirmInputSchema.parse(inputValue);
     const preview = this.activePreview;
@@ -250,6 +249,16 @@ export class AssistedLiveService {
       this.clearPrivatePreview();
       this.replaceState("ARMED", ["PREVIEW_EXPIRED"], this.arm.getArmedUntil());
       throw new AssistedExecutionError("PREVIEW_EXPIRED");
+    }
+
+    try {
+      this.assertNoBlockingAttempt();
+    } catch (error) {
+      if (!(error instanceof AssistedExecutionError) || error.code !== "STORAGE_DEGRADED") throw error;
+      this.arm.disarm();
+      this.clearPrivatePreview();
+      this.replaceState("HALTED", ["STORAGE_DEGRADED"], null);
+      return this.getState();
     }
 
     this.inFlight = true;
