@@ -163,7 +163,15 @@ describe("TASK-008 assisted single submission service", () => {
   });
 
   it("durably records one fixture attempt, confirms fixture evidence, and never persists a LIVE trade or token", async () => {
-    const value = await setup();
+    const value = await setup({ confirmationEvidence: [{
+      kind: "MATCHED_OPEN",
+      source: "FIXTURE",
+      symbol: "GPS_USDT",
+      side: "LONG",
+      entryPrice: 0.0123,
+      size: 1.25,
+      observedAt: "2026-09-29T12:00:00.000Z",
+    }] });
     const published: DashboardEvent[] = [];
     value.events.subscribe((event) => published.push(event));
     const prepared = await armAndPreview(value.service);
@@ -253,7 +261,18 @@ describe("TASK-008 assisted single submission service", () => {
   });
 
   it("uses the explicit live position source and live aggregates, never an open PAPER record", async () => {
-    const value = await setup({ positionState: "FLAT" });
+    const value = await setup({
+      positionState: "FLAT",
+      confirmationEvidence: [{
+        kind: "MATCHED_OPEN",
+        source: "FIXTURE",
+        symbol: "GPS_USDT",
+        side: "LONG",
+        entryPrice: 0.0123,
+        size: 1.25,
+        observedAt: "2026-09-29T12:00:00.000Z",
+      }],
+    });
     value.storage.trades.createTrade({
       id: "40000000-0000-4000-8000-000000000001",
       symbol: "GPS_USDT",

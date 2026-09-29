@@ -91,7 +91,7 @@ export class AssistedLiveService {
     if (options.adapter.provider !== provider) throw new TypeError("Execution adapter does not match its configured provider.");
     this.arm = options.armService ?? new ExecutionArmService(() => this.clockNow().getTime());
     this.positionConfirmation = options.confirmationService ?? new PositionConfirmationService({
-      source: options.confirmationSource ?? new FixturePositionConfirmationSource(),
+      source: options.confirmationSource ?? new FixturePositionConfirmationSource(undefined, this.now),
       now: this.now,
     });
     this.state = AssistedExecutionStateSchema.parse({

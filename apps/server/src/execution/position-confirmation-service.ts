@@ -137,26 +137,31 @@ export class PositionConfirmationService {
 /** Deterministic in-memory evidence source. It cannot read an exchange or browser. */
 export class FixturePositionConfirmationSource implements PositionConfirmationSource {
   private readonly evidence: unknown[];
+  private readonly now: () => Date;
   private calls = 0;
 
-  constructor(evidence?: readonly unknown[]) {
+  constructor(evidence?: readonly unknown[], now: () => Date = () => new Date()) {
     this.evidence = evidence ? [...evidence] : [];
+    this.now = now;
   }
 
   get readCalls(): number { return this.calls; }
 
-  async readEvidence(preview: PositionConfirmationContext): Promise<unknown> {
+  async readEvidence(_preview: PositionConfirmationContext): Promise<unknown> {
     this.calls += 1;
     if (this.evidence.length > 0) return this.evidence[Math.min(this.calls - 1, this.evidence.length - 1)];
     return {
-      kind: "MATCHED_OPEN",
+      kind: "UNKNOWN",
       source: "FIXTURE",
-      symbol: preview.symbol,
-      side: preview.side,
-      entryPrice: preview.referencePrice ?? 0.01,
-      size: 1,
-      observedAt: preview.createdAt,
+      reason: "SOURCE_UNAVAILABLE",
+      observedAt: this.timestamp(),
     };
+  }
+
+  private timestamp(): string {
+    const value = this.now();
+    if (!(value instanceof Date) || !Number.isFinite(value.getTime())) throw new Error("Fixture evidence clock is invalid.");
+    return value.toISOString();
   }
 }
 

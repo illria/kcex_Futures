@@ -7,7 +7,7 @@ import { RiskService } from "../../apps/server/src/risk/risk-service.js";
 import { StorageService } from "../../apps/server/src/storage/storage-service.js";
 import { AssistedLiveService } from "../../apps/server/src/execution/assisted-live-service.js";
 import { FixtureExecutionAdapter, type FixtureExecutionAdapterOptions } from "../../apps/server/src/execution/fixture-execution-adapter.js";
-import { FixtureExecutionPositionSource } from "../../apps/server/src/execution/execution-position-source.js";
+import { FixtureExecutionPositionSource, resolveInitialFixturePositionState } from "../../apps/server/src/execution/execution-position-source.js";
 import {
   FixturePositionConfirmationSource,
   PositionConfirmationService,
@@ -32,6 +32,7 @@ export interface Task008SetupOptions {
   confirmationService?: PositionConfirmationServiceType;
   confirmationDeadlineMs?: number;
   confirmationPollIntervalMs?: number;
+  seedAttempts?: (storage: StorageService) => void;
 }
 
 export async function createTask008Setup(options: Task008SetupOptions = {}) {
@@ -39,6 +40,7 @@ export async function createTask008Setup(options: Task008SetupOptions = {}) {
   const directory = await mkdtemp(join(tmpdir(), "task008-execution-"));
   const storage = new StorageService({ databaseFile: ":memory:", now });
   await storage.initialize();
+  options.seedAttempts?.(storage);
   const events = new EventBus();
   const risk = new RiskService({
     storage,
@@ -49,10 +51,10 @@ export async function createTask008Setup(options: Task008SetupOptions = {}) {
   });
   await risk.initialize();
   const adapter = options.adapter ?? new FixtureExecutionAdapter({ now, ...options.adapterOptions });
-  const positionSource = new FixtureExecutionPositionSource(options.positionState ?? "FLAT");
+  const positionSource = new FixtureExecutionPositionSource(options.positionState ?? resolveInitialFixturePositionState(storage));
   const fixtureConfirmationSource = options.confirmationSource
     ? null
-    : new FixturePositionConfirmationSource(options.confirmationEvidence);
+    : new FixturePositionConfirmationSource(options.confirmationEvidence, now);
   const confirmationSource = options.confirmationSource ?? fixtureConfirmationSource!;
   const confirmationService = options.confirmationService ?? new PositionConfirmationService({
     source: confirmationSource,

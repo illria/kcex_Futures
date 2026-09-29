@@ -55,6 +55,64 @@ describe("TASK-009 submission outcome and position confirmation", () => {
     } finally { await setup.cleanup(); }
   });
 
+  it("returns UNKNOWN/SOURCE_UNAVAILABLE when the default fixture evidence source has no fixture", async () => {
+    const observedNow = new Date(Date.parse(NOW) + 16_000).toISOString();
+    const source = new FixturePositionConfirmationSource(undefined, () => new Date(observedNow));
+    const evidence = await source.readEvidence({
+      previewId: "94000000-0000-4000-8000-000000000001",
+      symbol: "GPS_USDT",
+      side: "LONG",
+      referencePrice: 0.0123,
+      createdAt: NOW,
+    });
+    expect(evidence).toEqual({
+      kind: "UNKNOWN",
+      source: "FIXTURE",
+      reason: "SOURCE_UNAVAILABLE",
+      observedAt: observedNow,
+    });
+  });
+
+  it("accepts fresh evidence observed after the preview has aged past fifteen seconds", async () => {
+    const clock = { value: Date.parse(NOW) };
+    const setup = await createTask008Setup({
+      now: () => new Date(clock.value),
+      confirmationSource: {
+        readEvidence: () => {
+          clock.value += 16_000;
+          return { ...matched(), observedAt: new Date(clock.value).toISOString() };
+        },
+      },
+    });
+    try {
+      const preview = await prepare(setup);
+      const result = await setup.service.confirm({ previewId: preview.preview.previewId, confirmationToken: preview.confirmationToken });
+      expect(Date.parse(result.lastSubmission!.evidence!.observedAt) - Date.parse(preview.preview.createdAt)).toBe(16_000);
+      expect(result.status).toBe("CONFIRMED");
+      expect(setup.adapter.submitCalls).toBe(1);
+    } finally { await setup.cleanup(); }
+  });
+
+  it("keeps evidence UNKNOWN when its observation is more than fifteen seconds old", async () => {
+    const clock = { value: Date.parse(NOW) };
+    const setup = await createTask008Setup({
+      now: () => new Date(clock.value),
+      confirmationSource: {
+        readEvidence: () => {
+          clock.value += 16_001;
+          return matched();
+        },
+      },
+    });
+    try {
+      const preview = await prepare(setup);
+      const result = await setup.service.confirm({ previewId: preview.preview.previewId, confirmationToken: preview.confirmationToken });
+      expect(result.status).toBe("UNKNOWN");
+      expect(result.lastSubmission?.evidence?.kind).toBe("UNKNOWN");
+      expect(setup.adapter.submitCalls).toBe(1);
+    } finally { await setup.cleanup(); }
+  });
+
   it.each([
     { label: "timeout", adapterOptions: { delayMs: 20, resultMode: "VALID" as const }, submitTimeoutMs: 1 },
     { label: "thrown adapter error", adapterOptions: { resultMode: "THROW" as const } },
@@ -150,7 +208,10 @@ describe("TASK-009 submission outcome and position confirmation", () => {
   });
 
   it("can confirm an ambiguous adapter outcome from later fixture evidence without inventing an acknowledgement", async () => {
-    const setup = await createTask008Setup({ adapterOptions: { resultMode: "THROW" } });
+    const setup = await createTask008Setup({
+      adapterOptions: { resultMode: "THROW" },
+      confirmationEvidence: [matched()],
+    });
     try {
       const preview = await prepare(setup);
       const unknown = await setup.service.confirm({ previewId: preview.preview.previewId, confirmationToken: preview.confirmationToken });
