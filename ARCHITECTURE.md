@@ -410,6 +410,8 @@ direction, TP, or SL in TASK-008.
 
 ### Position Confirmation and UNKNOWN (TASK-009)
 
+Implementation status: REVIEW READY in PR #10; not merged.
+
 TASK-009 appends SQLite schema v2 for durable attempts. `SUBMITTING` and its
 audit event commit atomically before the fixture adapter call. The execution
 state then moves through `SUBMITTED` and `CONFIRMING`; only fresh fixture

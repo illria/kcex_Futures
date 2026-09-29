@@ -68,7 +68,7 @@ TASK-008 was merged to main before the current TASK-009 branch. The fixture-only
 path remains the only execution implementation; live KCEX mutation stays
 disabled.
 
-## Phase 5 — TASK-009: Position Confirmation + UNKNOWN State (in progress)
+## Phase 5 — TASK-009: Position Confirmation + UNKNOWN State (review ready)
 
 - durably record SUBMITTING with its audit event before adapter invocation
 - classify ambiguous adapter outcomes as UNKNOWN and block new entries

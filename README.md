@@ -236,7 +236,7 @@ Kill Switch 只阻止新 Paper entry；已有 Paper position 仍可 mark、close
 
 ## TASK-009 Position Confirmation + UNKNOWN State
 
-当前状态：IN PROGRESS。SQLite schema v2 增加 durable execution attempt；adapter 调用前，SUBMITTING 与审计事件以一个事务持久化。只有明确返回 `NOT_SUBMITTED` 才记录 FAILED；超时、抛错、异常响应和确认不足均进入 UNKNOWN，阻止新 Arm、Preview、Confirm 和 adapter 调用。UNKNOWN 只能由用户触发 `/api/v1/live/reconcile` 读取 fixture evidence，不会重试提交，也没有 force-clear 接口。
+当前状态：REVIEW READY（PR #10，尚未合并）。SQLite schema v2 增加 durable execution attempt；adapter 调用前，SUBMITTING 与审计事件以一个事务持久化。只有明确返回 `NOT_SUBMITTED` 才记录 FAILED；超时、抛错、异常响应和确认不足均进入 UNKNOWN，阻止新 Arm、Preview、Confirm 和 adapter 调用。UNKNOWN 只能由用户触发 `/api/v1/live/reconcile` 读取 fixture evidence，不会重试提交，也没有 force-clear 接口。
 
 仓位确认目前只支持 bounded fixture evidence。`CONFIRMED` 表示 fixture 数据匹配 symbol、方向和正数 entry/size，不代表真实 KCEX 仓位。不存在 LIVE trade row、真实 KCEX confirmation source、真实写请求、TP/SL 或 scheduler。`LIVE_TRADING=false` 保持强制关闭。验收标准见 [docs/tasks/TASK-009.md](docs/tasks/TASK-009.md)。
 

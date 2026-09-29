@@ -75,11 +75,11 @@ Spec: [docs/tasks/TASK-008.md](docs/tasks/TASK-008.md)
 
 Merged to main before TASK-009. Real KCEX order mutation remains disabled.
 
-## In Progress
+## Review Ready
 
 ### TASK-009 — Position Confirmation + UNKNOWN State
 
-Status: IN PROGRESS
+Status: REVIEW READY
 
 Spec: [docs/tasks/TASK-009.md](docs/tasks/TASK-009.md)
 
