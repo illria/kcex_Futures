@@ -35,7 +35,7 @@ describe("fixture-only execution adapter", () => {
       now: () => new Date("2026-09-29T12:00:02.000Z"),
       failureKind: "EXECUTION_FAILED",
     });
-    await expect(adapter.submit(preview)).resolves.toMatchObject({ status: "FAILED", failureKind: "EXECUTION_FAILED" });
+    await expect(adapter.submit(preview)).resolves.toMatchObject({ status: "FAILED", outcome: "NOT_SUBMITTED", failureKind: "EXECUTION_FAILED" });
     expect(adapter.submitCalls).toBe(1);
   });
 });

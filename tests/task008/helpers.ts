@@ -8,6 +8,12 @@ import { StorageService } from "../../apps/server/src/storage/storage-service.js
 import { AssistedLiveService } from "../../apps/server/src/execution/assisted-live-service.js";
 import { FixtureExecutionAdapter, type FixtureExecutionAdapterOptions } from "../../apps/server/src/execution/fixture-execution-adapter.js";
 import { FixtureExecutionPositionSource } from "../../apps/server/src/execution/execution-position-source.js";
+import {
+  FixturePositionConfirmationSource,
+  PositionConfirmationService,
+  type PositionConfirmationService as PositionConfirmationServiceType,
+  type PositionConfirmationSource,
+} from "../../apps/server/src/execution/position-confirmation-service.js";
 import { DEFAULT_RISK_LIMITS, type RiskLimits } from "../../packages/shared/src/risk.js";
 import type { ExecutionPositionState } from "../../packages/shared/src/execution.js";
 
@@ -21,6 +27,11 @@ export interface Task008SetupOptions {
   adapterOptions?: FixtureExecutionAdapterOptions;
   submitTimeoutMs?: number;
   previewTtlMs?: number;
+  confirmationSource?: PositionConfirmationSource;
+  confirmationEvidence?: readonly unknown[];
+  confirmationService?: PositionConfirmationServiceType;
+  confirmationDeadlineMs?: number;
+  confirmationPollIntervalMs?: number;
 }
 
 export async function createTask008Setup(options: Task008SetupOptions = {}) {
@@ -39,6 +50,17 @@ export async function createTask008Setup(options: Task008SetupOptions = {}) {
   await risk.initialize();
   const adapter = options.adapter ?? new FixtureExecutionAdapter({ now, ...options.adapterOptions });
   const positionSource = new FixtureExecutionPositionSource(options.positionState ?? "FLAT");
+  const fixtureConfirmationSource = options.confirmationSource
+    ? null
+    : new FixturePositionConfirmationSource(options.confirmationEvidence);
+  const confirmationSource = options.confirmationSource ?? fixtureConfirmationSource!;
+  const confirmationService = options.confirmationService ?? new PositionConfirmationService({
+    source: confirmationSource,
+    now,
+    sleep: async () => undefined,
+    deadlineMs: options.confirmationDeadlineMs ?? 1_000,
+    pollIntervalMs: options.confirmationPollIntervalMs ?? 100,
+  });
   const service = new AssistedLiveService({
     provider: "FIXTURE",
     adapter,
@@ -46,12 +68,16 @@ export async function createTask008Setup(options: Task008SetupOptions = {}) {
     risk,
     events,
     positionSource,
+    confirmationSource,
+    confirmationService,
+    onConfirmed: () => positionSource.setPositionState("OPEN"),
     now,
     idGenerator: uuidSequence(),
     confirmationTokenGenerator: uuidSequence(100),
     submitTimeoutMs: options.submitTimeoutMs,
     previewTtlMs: options.previewTtlMs,
   });
+  await service.recover();
 
   return {
     directory,
@@ -60,6 +86,7 @@ export async function createTask008Setup(options: Task008SetupOptions = {}) {
     risk,
     adapter,
     positionSource,
+    fixtureConfirmationSource,
     service,
     async cleanup() {
       service.close();

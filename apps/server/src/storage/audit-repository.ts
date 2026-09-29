@@ -69,6 +69,17 @@ export class AuditRepository {
     return rows.map(parseAuditEventRow);
   }
 
+  hasRiskExecutionOutcome(eventType: "RISK_EXECUTION_FAILURE" | "RISK_EXECUTION_SUCCESS", executionAttemptId: string): boolean {
+    const row = this.database.prepare(`
+      SELECT 1 AS found
+      FROM audit_events
+      WHERE category = 'RISK' AND event_type = ?
+        AND json_extract(payload_json, '$.executionAttemptId') = ?
+      LIMIT 1
+    `).get(eventType, executionAttemptId) as { found?: number } | undefined;
+    return row?.found === 1;
+  }
+
   private nextCreatedAt(): string {
     if (this.lastCreatedAtMs === null) {
       const row = this.database.prepare("SELECT MAX(created_at) AS latest FROM audit_events").get() as

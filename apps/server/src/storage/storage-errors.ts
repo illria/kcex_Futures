@@ -39,3 +39,24 @@ export class TradeVersionConflictError extends Error {
     this.name = "TradeVersionConflictError";
   }
 }
+
+export class ExecutionAttemptConflictError extends Error {
+  constructor() {
+    super("Execution attempt version conflict.");
+    this.name = "ExecutionAttemptConflictError";
+  }
+}
+
+export class ExecutionAttemptNotFoundError extends Error {
+  constructor() {
+    super("Execution attempt was not found.");
+    this.name = "ExecutionAttemptNotFoundError";
+  }
+}
+
+export class InvalidExecutionAttemptTransitionError extends Error {
+  constructor() {
+    super("Execution attempt transition is not allowed.");
+    this.name = "InvalidExecutionAttemptTransitionError";
+  }
+}

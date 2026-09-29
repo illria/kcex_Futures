@@ -55,7 +55,7 @@ See [docs/tasks/TASK-007.md](docs/tasks/TASK-007.md) for limits, integration,
 audit, API, Dashboard, and acceptance requirements. TASK-007 was merged at
 `4aa21ad4242e5269fce31179012c9f9d8598ed6b`.
 
-## Phase 4 — TASK-008: Assisted Single Live Order Flow (review ready)
+## Phase 4 — TASK-008: Assisted Single Live Order Flow (complete)
 
 This phase builds only the authorization-gated fixture execution path: runtime
 arm, immutable preview, explicit single confirmation, RiskEngine precheck,
@@ -64,11 +64,19 @@ provider is DISABLED; CI uses FIXTURE. Real KCEX mutation remains disabled,
 pending platform authorization, deferred manual verification, and a separate
 safety review. See [docs/tasks/TASK-008.md](docs/tasks/TASK-008.md).
 
-## Phase 5 — TASK-009: Position Confirmation + UNKNOWN State (planned)
+TASK-008 was merged to main before the current TASK-009 branch. The fixture-only
+path remains the only execution implementation; live KCEX mutation stays
+disabled.
 
-- verify outcomes from explicit page evidence
-- preserve UNKNOWN on uncertain outcomes
-- block unsafe retries
+## Phase 5 — TASK-009: Position Confirmation + UNKNOWN State (in progress)
+
+- durably record SUBMITTING with its audit event before adapter invocation
+- classify ambiguous adapter outcomes as UNKNOWN and block new entries
+- bound fixture-only position confirmation and require symbol/side/size evidence
+- provide manual read-only reconciliation without retrying submission
+- recover interrupted attempts fail-closed on startup
+
+See [docs/tasks/TASK-009.md](docs/tasks/TASK-009.md) for the acceptance criteria.
 
 ## Phase 6 — TASK-010: TP/SL Management (planned)
 

@@ -232,7 +232,13 @@ Kill Switch 只阻止新 Paper entry；已有 Paper position 仍可 mark、close
 
 当前阶段：fixture-only execution architecture。后端默认 `LIVE_EXECUTION_PROVIDER=DISABLED`；CI 显式使用 `FIXTURE`。页面提供短时 runtime arm、不可变预览、单次人工确认、RiskEngine precheck、single-flight 提交状态和审计事件。Fixture 的 `SUBMITTED` 只表示 fixture adapter 接受了一次提交动作，不代表订单成交或仓位已确认。
 
-本阶段没有真实 KCEX order adapter、KCEX mutation selector、订单按钮操作或真实下单。Dashboard 明确显示 `REAL KCEX EXECUTION DISABLED` 与 `FIXTURE SUBMISSION ONLY · NO KCEX ORDER`。真实 KCEX mutation 仍需平台授权，并等待人工验证页面、合约数量语义、逐仓与杠杆控件及单独安全审核。TASK-009 的仓位/成交确认、UNKNOWN reconciliation、自动重试、TP/SL、scheduler 和随机交易都未实现。详见 [docs/tasks/TASK-008.md](docs/tasks/TASK-008.md)。
+本阶段没有真实 KCEX order adapter、KCEX mutation selector、订单按钮操作或真实下单。Dashboard 明确显示 `REAL KCEX EXECUTION DISABLED` 与 `FIXTURE SUBMISSION ONLY · NO KCEX ORDER`。真实 KCEX mutation 仍需平台授权，并等待人工验证页面、合约数量语义、逐仓与杠杆控件及单独安全审核。TASK-008 已合并到 main；其后的仓位确认和 UNKNOWN 状态由 TASK-009 单独实现。详见 [docs/tasks/TASK-008.md](docs/tasks/TASK-008.md)。
+
+## TASK-009 Position Confirmation + UNKNOWN State
+
+当前状态：IN PROGRESS。SQLite schema v2 增加 durable execution attempt；adapter 调用前，SUBMITTING 与审计事件以一个事务持久化。只有明确返回 `NOT_SUBMITTED` 才记录 FAILED；超时、抛错、异常响应和确认不足均进入 UNKNOWN，阻止新 Arm、Preview、Confirm 和 adapter 调用。UNKNOWN 只能由用户触发 `/api/v1/live/reconcile` 读取 fixture evidence，不会重试提交，也没有 force-clear 接口。
+
+仓位确认目前只支持 bounded fixture evidence。`CONFIRMED` 表示 fixture 数据匹配 symbol、方向和正数 entry/size，不代表真实 KCEX 仓位。不存在 LIVE trade row、真实 KCEX confirmation source、真实写请求、TP/SL 或 scheduler。`LIVE_TRADING=false` 保持强制关闭。验收标准见 [docs/tasks/TASK-009.md](docs/tasks/TASK-009.md)。
 
 ## 推荐技术栈
 

@@ -67,20 +67,23 @@ Spec: [docs/tasks/TASK-007.md](docs/tasks/TASK-007.md)
 
 TASK-007 merge commit: `4aa21ad4242e5269fce31179012c9f9d8598ed6b`.
 
-## Review Ready
-
 ### TASK-008 — Assisted Single Live Order Flow
 
-Status: REVIEW READY
+Status: COMPLETE
 
 Spec: [docs/tasks/TASK-008.md](docs/tasks/TASK-008.md)
 
-Current phase is fixture-only. Real KCEX order mutation remains disabled pending
-platform authorization and deferred manual verification.
+Merged to main before TASK-009. Real KCEX order mutation remains disabled.
 
-## Planned
+## In Progress
 
 ### TASK-009 — Position Confirmation + UNKNOWN State
+
+Status: IN PROGRESS
+
+Spec: [docs/tasks/TASK-009.md](docs/tasks/TASK-009.md)
+
+## Planned
 
 ### TASK-010 — TP/SL Management
 

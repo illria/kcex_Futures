@@ -162,14 +162,14 @@ describe("TASK-008 assisted single submission service", () => {
       .rejects.toMatchObject({ code: "ARM_REQUIRED" });
   });
 
-  it("allows one prechecked fixture submission and never persists a LIVE trade or token", async () => {
+  it("durably records one fixture attempt, confirms fixture evidence, and never persists a LIVE trade or token", async () => {
     const value = await setup();
     const published: DashboardEvent[] = [];
     value.events.subscribe((event) => published.push(event));
     const prepared = await armAndPreview(value.service);
     const result = await value.service.confirm(confirmation(prepared.preview.previewId, prepared.confirmationToken));
-    expect(result).toMatchObject({ status: "SUBMITTED", provider: "FIXTURE", armedUntil: null, activePreview: null });
-    expect(result.lastSubmission).toMatchObject({ status: "SUBMITTED", symbol: "GPS_USDT", side: "LONG" });
+    expect(result).toMatchObject({ status: "CONFIRMED", provider: "FIXTURE", armedUntil: null, activePreview: null });
+    expect(result.lastSubmission).toMatchObject({ status: "CONFIRMED", symbol: "GPS_USDT", side: "LONG" });
     expect(value.adapter.submitCalls).toBe(1);
     expect(value.storage.trades.listTrades()).toEqual([]);
     await expect(value.service.confirm(confirmation(prepared.preview.previewId, prepared.confirmationToken)))
@@ -178,15 +178,19 @@ describe("TASK-008 assisted single submission service", () => {
     const audits = JSON.stringify(value.storage.auditEvents.listAuditEvents({ limit: 100 }));
     expect(audits).toContain("LIVE_ARMED");
     expect(audits).toContain("LIVE_PREVIEW_CREATED");
-    expect(audits).toContain("LIVE_SUBMIT_ATTEMPT");
-    expect(audits).toContain("LIVE_SUBMITTED_FIXTURE");
+    expect(audits).toContain("LIVE_ATTEMPT_SUBMITTING");
+    expect(audits).toContain("LIVE_ATTEMPT_SUBMITTED");
+    expect(audits).toContain("LIVE_POSITION_CONFIRMED_FIXTURE");
     expect(audits).not.toContain(prepared.confirmationToken);
     const submitted = published.find((event) => event.type === "execution.submitted");
     expect(submitted?.type).toBe("execution.submitted");
     if (submitted?.type === "execution.submitted") {
       expect(submitted.payload).toMatchObject({ provider: "FIXTURE", symbol: "GPS_USDT", side: "LONG" });
+      expect(submitted.payload.attemptId).toBeTruthy();
       expect(submitted.payload).not.toHaveProperty("exchangeOrderId");
     }
+    expect(published.some((event) => event.type === "execution.confirming")).toBe(true);
+    expect(published.some((event) => event.type === "execution.confirmed")).toBe(true);
   });
 
   it("single-flights concurrent confirm requests and enters the adapter once", async () => {
@@ -265,7 +269,7 @@ describe("TASK-008 assisted single submission service", () => {
     });
     const prepared = await armAndPreview(value.service);
     const result = await value.service.confirm(confirmation(prepared.preview.previewId, prepared.confirmationToken));
-    expect(result.status).toBe("SUBMITTED");
+    expect(result.status).toBe("CONFIRMED");
     expect(value.risk.getState().metrics).toMatchObject({ mode: "LIVE", dailyOpenedTrades: 0, dailyRealizedLossUsdt: 0 });
     expect(value.adapter.submitCalls).toBe(1);
     expect(value.storage.trades.listTrades()).toHaveLength(1);
@@ -302,24 +306,25 @@ describe("TASK-008 assisted single submission service", () => {
     expect(result).toMatchObject({ status: "FAILED", armedUntil: null, reasons: ["EXECUTION_FAILED"] });
     expect(value.adapter.submitCalls).toBe(1);
     expect(value.risk.getState().metrics.consecutiveFailures).toBe(1);
-    expect(value.storage.auditEvents.listAuditEvents({ limit: 100 }).map((event) => event.eventType)).toContain("LIVE_SUBMIT_FAILED");
+    expect(value.storage.auditEvents.listAuditEvents({ limit: 100 }).map((event) => event.eventType)).toContain("LIVE_ATTEMPT_NOT_SUBMITTED");
   });
 
-  it("maps a fixture adapter timeout to one FAILED result without retry", async () => {
+  it("maps a fixture adapter timeout to durable UNKNOWN without retry", async () => {
     const value = await setup({ adapterOptions: { delayMs: 25 }, submitTimeoutMs: 1 });
     const prepared = await armAndPreview(value.service);
     const result = await value.service.confirm(confirmation(prepared.preview.previewId, prepared.confirmationToken));
-    expect(result).toMatchObject({ status: "FAILED", lastSubmission: { failureKind: "TIMEOUT" } });
+    expect(result).toMatchObject({ status: "UNKNOWN", lastSubmission: { status: "UNKNOWN", reason: "SUBMISSION_OUTCOME_UNKNOWN" } });
     expect(value.adapter.submitCalls).toBe(1);
     expect(value.risk.getState().metrics.consecutiveFailures).toBe(1);
+    expect(() => value.service.armRuntime(EXECUTION_ARM_ACKNOWLEDGEMENT)).toThrow(/UNRESOLVED_EXECUTION_ATTEMPT/);
   });
 
-  it("does not reset prior failure accounting on fixture SUBMITTED", async () => {
+  it("resets failure accounting only after fixture position confirmation", async () => {
     const value = await setup();
     await value.risk.recordExecutionFailure({ failureKind: "EXECUTION_FAILED" });
     const prepared = await armAndPreview(value.service);
     await value.service.confirm(confirmation(prepared.preview.previewId, prepared.confirmationToken));
-    expect(value.risk.getState().metrics.consecutiveFailures).toBe(1);
+    expect(value.risk.getState().metrics.consecutiveFailures).toBe(0);
     expect(value.storage.trades.listTrades()).toEqual([]);
   });
 });

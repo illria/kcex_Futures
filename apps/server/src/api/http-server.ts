@@ -32,6 +32,7 @@ import {
   ExecutionDisarmInputSchema,
   ExecutionPreviewInputSchema,
   ExecutionPreviewResponseSchema,
+  ExecutionReconcileInputSchema,
 } from "../../../../packages/shared/src/execution.js";
 import { AuthService } from "../auth/auth-service.js";
 import { EventBus } from "../realtime/event-bus.js";
@@ -213,6 +214,7 @@ async function handleApiRequest(
     "/api/v1/live/disarm",
     "/api/v1/live/preview",
     "/api/v1/live/confirm",
+    "/api/v1/live/reconcile",
   ].includes(url.pathname);
   requireSameOrigin(request, requiresLiveOrigin);
 
@@ -288,6 +290,18 @@ async function handleApiRequest(
         input.previewId = "";
         input.confirmationToken = "";
       }
+    }
+    return true;
+  }
+
+  if (method === "POST" && url.pathname === "/api/v1/live/reconcile") {
+    const raw = await readJson(request);
+    try {
+      const input = parseRequestBody(ExecutionReconcileInputSchema, raw);
+      if (!execution) throw new AssistedExecutionError("EXECUTION_PROVIDER_DISABLED", 503);
+      sendJson(response, 200, await execution.reconcile(input.attemptId));
+    } finally {
+      clearStringFields(raw);
     }
     return true;
   }

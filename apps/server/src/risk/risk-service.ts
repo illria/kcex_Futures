@@ -61,7 +61,7 @@ export class RiskService {
     } catch {
       this.failureHistoryReliable = false;
     }
-    const snapshot = await this.readContext();
+    const snapshot = await this.readContext(this.state.metrics.mode);
     this.replaceState(this.stateFor(snapshot.context, snapshot.metrics), true);
     return this.getState();
   }
@@ -138,6 +138,15 @@ export class RiskService {
   async recordExecutionFailure(input: RiskExecutionFailureInput = {}): Promise<RiskState> {
     if (!this.initialized) await this.initialize();
     const failure = RiskExecutionFailureInputSchema.parse(input);
+    if (failure.executionAttemptId) {
+      try {
+        if (this.options.storage.auditEvents.hasRiskExecutionOutcome("RISK_EXECUTION_FAILURE", failure.executionAttemptId)) {
+          return this.getState();
+        }
+      } catch {
+        this.failureHistoryReliable = false;
+      }
+    }
     const nextCount = this.consecutiveFailures + 1;
     try {
       this.options.storage.auditEvents.appendAuditEvent({
@@ -145,32 +154,48 @@ export class RiskService {
         eventType: "RISK_EXECUTION_FAILURE",
         severity: "ERROR",
         message: "Execution layer reported a failure.",
-        payload: { failureKind: failure.failureKind ?? "EXECUTION_FAILED", consecutiveFailures: nextCount },
+        payload: {
+          failureKind: failure.failureKind ?? "EXECUTION_FAILED",
+          consecutiveFailures: nextCount,
+          ...(failure.executionAttemptId ? { executionAttemptId: failure.executionAttemptId } : {}),
+        },
       });
       if (this.failureHistoryReliable) this.consecutiveFailures = nextCount;
     } catch {
       this.failureHistoryReliable = false;
     }
-    const snapshot = await this.readContext();
+    const snapshot = await this.readContext(this.state.metrics.mode);
     this.replaceState(this.stateFor(snapshot.context, snapshot.metrics), true);
     return this.getState();
   }
 
-  async recordExecutionSuccess(): Promise<RiskState> {
+  async recordExecutionSuccess(
+    executionAttemptId?: string,
+    livePositionState?: "FLAT" | "OPEN" | "UNKNOWN",
+  ): Promise<RiskState> {
     if (!this.initialized) await this.initialize();
+    if (executionAttemptId) {
+      try {
+        if (this.options.storage.auditEvents.hasRiskExecutionOutcome("RISK_EXECUTION_SUCCESS", executionAttemptId)) {
+          return this.getState();
+        }
+      } catch {
+        this.failureHistoryReliable = false;
+      }
+    }
     try {
       this.options.storage.auditEvents.appendAuditEvent({
         category: "RISK",
         eventType: "RISK_EXECUTION_SUCCESS",
         severity: "INFO",
         message: "Execution layer reported success.",
-        payload: { consecutiveFailures: 0 },
+        payload: { consecutiveFailures: 0, ...(executionAttemptId ? { executionAttemptId } : {}) },
       });
       if (this.failureHistoryReliable) this.consecutiveFailures = 0;
     } catch {
       this.failureHistoryReliable = false;
     }
-    const snapshot = await this.readContext();
+    const snapshot = await this.readContext(this.state.metrics.mode, livePositionState);
     this.replaceState(this.stateFor(snapshot.context, snapshot.metrics), true);
     return this.getState();
   }

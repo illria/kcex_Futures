@@ -44,6 +44,16 @@ require manual inspection
 
 Do not automatically try the same order again.
 
+After adapter invocation, timeout, thrown error, malformed result, or insufficient
+position evidence must remain `UNKNOWN`. Only an explicit validated
+`outcome=NOT_SUBMITTED` may be recorded as `FAILED`. A durable UNKNOWN attempt
+blocks arm, preview, confirmation, and every new adapter call. Reconciliation is
+manual, read-only evidence collection; there is no retry or force-clear API.
+
+TASK-009 evidence remains fixture-only. `CONFIRMED` is not proof of a real KCEX
+position, and must not create a LIVE trade row. Real KCEX order mutation and
+confirmation sources remain deferred; `LIVE_TRADING=false` remains mandatory.
+
 ## Selector drift rule
 
 If a critical selector fails, trading halts.

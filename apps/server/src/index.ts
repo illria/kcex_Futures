@@ -72,14 +72,17 @@ async function startServer(): Promise<void> {
   const executionAdapter = config.LIVE_EXECUTION_PROVIDER === "FIXTURE"
     ? new FixtureExecutionAdapter()
     : new DisabledKcexExecutionAdapter();
+  const executionPositionSource = new FixtureExecutionPositionSource("UNKNOWN");
   const execution = new AssistedLiveService({
     provider: config.LIVE_EXECUTION_PROVIDER,
     adapter: executionAdapter,
     storage,
     risk,
     events,
-    positionSource: new FixtureExecutionPositionSource(config.LIVE_EXECUTION_PROVIDER === "FIXTURE" ? "FLAT" : "UNKNOWN"),
+    positionSource: executionPositionSource,
+    onConfirmed: () => executionPositionSource.setPositionState("OPEN"),
   });
+  await execution.recover();
   const adapter = config.AUTH_PROVIDER === "KCEX"
     ? new KcexAuthAdapter({ baseUrl: config.KCEX_BASE_URL, headless: config.BROWSER_HEADLESS })
     : new FakeAuthAdapter();

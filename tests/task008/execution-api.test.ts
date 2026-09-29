@@ -2,6 +2,7 @@ import type { AddressInfo } from "node:net";
 import WebSocket from "ws";
 import { afterEach, describe, expect, it } from "vitest";
 import { createDashboardServer } from "../../apps/server/src/api/http-server.js";
+import { AssistedLiveService } from "../../apps/server/src/execution/assisted-live-service.js";
 import { parseDashboardEvent } from "../../packages/shared/src/protocol.js";
 import { AssistedExecutionStateSchema, ExecutionPreviewResponseSchema } from "../../packages/shared/src/execution.js";
 import { createAuthFixture } from "../task002/helpers.js";
@@ -20,8 +21,8 @@ describe("TASK-008 loopback assisted-execution API", () => {
     for (const cleanup of cleanups.splice(0)) await cleanup();
   });
 
-  async function start() {
-    const setup = await createTask008Setup();
+  async function start(setupOptions: Parameters<typeof createTask008Setup>[0] = {}) {
+    const setup = await createTask008Setup(setupOptions);
     setups.push(setup);
     const authFixture = await createAuthFixture();
     cleanups.push(authFixture.cleanup);
@@ -99,15 +100,15 @@ describe("TASK-008 loopback assisted-execution API", () => {
       confirmationToken: prepared.confirmationToken,
     });
     expect(AssistedExecutionStateSchema.parse(await confirmResponse.json())).toMatchObject({
-      status: "SUBMITTED",
+      status: "CONFIRMED",
       armedUntil: null,
       activePreview: null,
-      lastSubmission: { status: "SUBMITTED", provider: "FIXTURE" },
+      lastSubmission: { status: "CONFIRMED", provider: "FIXTURE" },
     });
     expect(adapter.submitCalls).toBe(1);
 
     const dashboard = await (await fetch(`${url}/api/v1/dashboard/snapshot`)).json() as { execution: unknown };
-    expect(AssistedExecutionStateSchema.parse(dashboard.execution).status).toBe("SUBMITTED");
+    expect(AssistedExecutionStateSchema.parse(dashboard.execution).status).toBe("CONFIRMED");
     for (const path of ["/api/v1/kcex/order", "/api/v1/kcex/submit", "/api/v1/kcex/cancel"]) {
       expect((await post(path, {})).status).toBe(404);
     }
@@ -124,5 +125,99 @@ describe("TASK-008 loopback assisted-execution API", () => {
       activePreview: null,
     });
     expect((await fetch(`${url}/api/v1/live/arm`)).status).toBe(404);
+  });
+
+  it("offers same-origin read-only UNKNOWN reconciliation and no force-clear or retry route", async () => {
+    const { url, post, service, adapter } = await start({ adapterOptions: { resultMode: "THROW" } });
+    await post("/api/v1/live/arm", { acknowledgement: "ARM ASSISTED LIVE EXECUTION" });
+    const prepared = ExecutionPreviewResponseSchema.parse(await (await post("/api/v1/live/preview", {
+      side: "LONG", marginUsdt: 50, leverage: 10,
+    })).json());
+    const unknown = AssistedExecutionStateSchema.parse(await (await post("/api/v1/live/confirm", {
+      previewId: prepared.preview.previewId,
+      confirmationToken: prepared.confirmationToken,
+    })).json());
+    expect(unknown.status).toBe("UNKNOWN");
+    const attemptId = unknown.lastSubmission!.attemptId;
+
+    expect((await post("/api/v1/live/reconcile", { attemptId }, "https://evil.example.invalid")).status).toBe(403);
+    expect((await post("/api/v1/live/reconcile", { attemptId, forceClear: true })).status).toBe(400);
+    for (const path of [
+      "/api/v1/live/retry",
+      "/api/v1/live/resubmit",
+      "/api/v1/live/force-confirm",
+      "/api/v1/live/unknown/clear",
+    ]) {
+      expect((await post(path, { attemptId })).status).toBe(404);
+    }
+    const reconciled = AssistedExecutionStateSchema.parse(await (await post("/api/v1/live/reconcile", { attemptId })).json());
+    expect(reconciled.status).toBe("CONFIRMED");
+    expect(service.getState().status).toBe("CONFIRMED");
+    expect(adapter.submitCalls).toBe(1);
+  });
+
+  it("restores durable UNKNOWN in the first execution.state sent to a new WebSocket after restart", async () => {
+    const setup = await start({ adapterOptions: { resultMode: "THROW" } });
+    await setup.post("/api/v1/live/arm", { acknowledgement: "ARM ASSISTED LIVE EXECUTION" });
+    const prepared = ExecutionPreviewResponseSchema.parse(await (await setup.post("/api/v1/live/preview", {
+      side: "LONG", marginUsdt: 50, leverage: 10,
+    })).json());
+    const unknown = AssistedExecutionStateSchema.parse(await (await setup.post("/api/v1/live/confirm", {
+      previewId: prepared.preview.previewId,
+      confirmationToken: prepared.confirmationToken,
+    })).json());
+    expect(unknown.status).toBe("UNKNOWN");
+
+    const restartedService = new AssistedLiveService({
+      provider: "FIXTURE",
+      adapter: setup.adapter,
+      storage: setup.storage,
+      risk: setup.risk,
+      events: setup.events,
+      positionSource: setup.positionSource,
+    });
+    expect((await restartedService.recover()).status).toBe("UNKNOWN");
+    const authFixture = await createAuthFixture();
+    cleanups.push(authFixture.cleanup);
+    const restartedServer = createDashboardServer({
+      auth: authFixture.auth,
+      vault: authFixture.vault,
+      events: setup.events,
+      storage: setup.storage,
+      risk: setup.risk,
+      execution: restartedService,
+    });
+    servers.push(restartedServer);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        restartedServer.once("error", reject);
+        restartedServer.listen(0, "127.0.0.1", resolve);
+      });
+      const address = restartedServer.address() as AddressInfo;
+      const url = `http://127.0.0.1:${address.port}`;
+      const stateEvent = await new Promise<ReturnType<typeof parseDashboardEvent>>((resolve, reject) => {
+        const socket = new WebSocket(`${url.replace(/^http:/, "ws:")}/api/v1/events`, { headers: { origin: url } });
+        socket.once("error", reject);
+        socket.on("message", (message) => {
+          try {
+            const event = parseDashboardEvent(JSON.parse(message.toString()));
+            if (event.type === "execution.state") {
+              socket.close();
+              resolve(event);
+            }
+          } catch (error) {
+            socket.close();
+            reject(error);
+          }
+        });
+      });
+      expect(stateEvent.type).toBe("execution.state");
+      if (stateEvent.type === "execution.state") {
+        expect(stateEvent.payload.status).toBe("UNKNOWN");
+        expect(stateEvent.payload.lastSubmission?.status).toBe("UNKNOWN");
+      }
+    } finally {
+      restartedService.close();
+    }
   });
 });

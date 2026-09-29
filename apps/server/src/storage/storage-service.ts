@@ -7,6 +7,7 @@ import {
 } from "../../../../packages/shared/src/storage.js";
 import { AuditRepository } from "./audit-repository.js";
 import { DailyPlanRepository } from "./daily-plan-repository.js";
+import { ExecutionAttemptRepository } from "./execution-attempt-repository.js";
 import { SQLiteDatabase } from "./sqlite-database.js";
 import { DatabaseSchemaTooNewError, StorageInitializationError } from "./storage-errors.js";
 import { TradeRepository } from "./trade-repository.js";
@@ -27,6 +28,7 @@ export class StorageService {
   private tradesRepository: TradeRepository | null = null;
   private dailyPlansRepository: DailyPlanRepository | null = null;
   private auditEventsRepository: AuditRepository | null = null;
+  private executionAttemptsRepository: ExecutionAttemptRepository | null = null;
 
   constructor(options: StorageServiceOptions = {}) {
     this.database = new SQLiteDatabase({ fileName: options.databaseFile });
@@ -53,6 +55,11 @@ export class StorageService {
     return this.auditEventsRepository!;
   }
 
+  get executionAttempts(): ExecutionAttemptRepository {
+    this.assertReady();
+    return this.executionAttemptsRepository!;
+  }
+
   async initialize(): Promise<void> {
     if (this.isReady) return;
     if (this.closed) throw new StorageInitializationError();
@@ -62,6 +69,7 @@ export class StorageService {
       this.tradesRepository = new TradeRepository(connection, this.now);
       this.dailyPlansRepository = new DailyPlanRepository(connection, this.now);
       this.auditEventsRepository = new AuditRepository(connection, this.now);
+      this.executionAttemptsRepository = new ExecutionAttemptRepository(connection, this.auditEventsRepository, this.now);
       this.initialized = true;
       this.logger?.info({ schemaVersion }, "Trading storage ready.");
     } catch (error) {
@@ -121,6 +129,7 @@ export class StorageService {
     this.tradesRepository = null;
     this.dailyPlansRepository = null;
     this.auditEventsRepository = null;
+    this.executionAttemptsRepository = null;
     this.database.close();
   }
 
@@ -137,4 +146,9 @@ const REQUIRED_STORAGE_PROBES = [
   "SELECT id, trade_id, event_type, event_time, payload_json, created_at FROM trade_events LIMIT 0",
   "SELECT date_key, symbol, daily_target, completed, margin_usdt, leverage, created_at, updated_at FROM daily_plans LIMIT 0",
   "SELECT id, category, event_type, severity, message, payload_json, created_at FROM audit_events LIMIT 0",
+  `SELECT attempt_id, preview_id, provider, symbol, side, margin_usdt, leverage, status,
+    fixture_submission_id, outcome, failure_kind, reason_code, evidence_json, submitted_at,
+    confirmation_started_at, confirmed_at, failed_at, unknown_at, observed_side,
+    observed_entry_price, observed_size, observed_at, created_at, updated_at, version
+    FROM execution_attempts LIMIT 0`,
 ] as const;
