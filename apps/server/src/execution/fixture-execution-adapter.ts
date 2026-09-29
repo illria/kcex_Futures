@@ -38,7 +38,7 @@ export class FixtureExecutionAdapter implements ExecutionAdapter {
   }
 
   async submit(previewInput: AssistedLivePreview): Promise<ExecutionAdapterResult> {
-    const preview = AssistedLivePreviewSchema.parse(previewInput);
+    AssistedLivePreviewSchema.parse(previewInput);
     this.calls += 1;
     if (this.delayMs > 0) await new Promise<void>((resolve) => setTimeout(resolve, this.delayMs));
     const now = this.now();
