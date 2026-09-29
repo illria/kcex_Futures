@@ -234,7 +234,7 @@ export class AssistedLiveService {
       if (!decision.allowed) {
         let auditFailed = false;
         try {
-          this.audit("LIVE_PRECHECK_BLOCKED", { ...previewAuditPayload(preview), reasonCodes: decision.reasons });
+          this.audit("LIVE_PRECHECK_BLOCKED", { ...previewAuditPayload(preview), riskReasons: decision.reasons });
         } catch {
           auditFailed = true;
         }
