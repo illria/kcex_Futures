@@ -1,6 +1,6 @@
 # TASK-008 — Assisted Single Live Order Flow
 
-Status: REVIEW READY
+Status: COMPLETE
 
 Subtitle: Authorization-gated fixture execution architecture
 
@@ -43,19 +43,18 @@ platform authorization.
   adapter. OPEN blocks and UNKNOWN halts. A denied precheck never calls the
   adapter and is not counted as an execution failure.
 - One in-flight confirmation and one adapter attempt maximum. There is no
-  automatic retry. Adapter failure and timeout become FAILED; a failure is
-  recorded in RiskService. Fixture SUBMITTED does not reset prior failure
-  counts.
-- Fixture submissions do not create LIVE trade rows or position state. No
-  database migration is introduced; audit events use the existing schema.
+  automatic retry. Explicit validated `NOT_SUBMITTED` may become FAILED;
+  ambiguous outcomes and position confirmation are extended by TASK-009.
+- Fixture submissions do not create LIVE trade rows. TASK-008 itself introduced
+  no database migration; TASK-009 appends schema v2 for durable attempts.
 - `DisabledKcexExecutionAdapter` fails with
   `KCEX_LIVE_EXECUTION_DEFERRED`; it has no browser, selector, or mutation
   behavior. `KCEX` is not a supported provider configuration.
 - Dashboard uses explicit Arm, Disarm, Preview, and Confirm actions and shows
   `REAL KCEX EXECUTION DISABLED` / `FIXTURE SUBMISSION ONLY · NO KCEX ORDER`.
 - `execution.state` and `execution.submitted` use shared protocol schemas.
-  `execution.state` is authoritative on WebSocket connection and contains no
-  confirmation token.
+  TASK-009 adds shared confirming, confirmed, and unknown events; no event
+  contains a confirmation token.
 
 ## State machine
 
@@ -69,14 +68,15 @@ DISARMED
   -> SUBMITTED
 
 Precheck denial -> BLOCKED or HALTED
-Adapter failure / timeout -> FAILED
+Explicit NOT_SUBMITTED -> FAILED
+Uncertain adapter result -> UNKNOWN (TASK-009)
 Safety or storage failure -> HALTED
 ```
 
 `SUBMITTED` means the fixture adapter accepted one submission action. It does
 not mean an order filled, an exchange confirmed the request, or a position
 opened. Position/fill confirmation, exchange reconciliation, and UNKNOWN
-outcomes are TASK-009.
+outcomes are handled by [TASK-009](TASK-009.md), with fixture evidence only.
 
 ## Local API
 

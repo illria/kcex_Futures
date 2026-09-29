@@ -1,4 +1,5 @@
 import { ExecutionPositionStateSchema, type ExecutionPositionState } from "../../../../packages/shared/src/execution.js";
+import type { StorageService } from "../storage/storage-service.js";
 
 export interface ExecutionPositionSource {
   getPositionState(): Promise<ExecutionPositionState> | ExecutionPositionState;
@@ -19,4 +20,16 @@ export class FixtureExecutionPositionSource implements ExecutionPositionSource {
   setPositionState(state: ExecutionPositionState): void {
     this.state = ExecutionPositionStateSchema.parse(state);
   }
+}
+
+/** Resolves the restart-safe fixture position state from durable attempts. */
+export function resolveInitialFixturePositionState(
+  storage: Pick<StorageService, "executionAttempts">,
+): ExecutionPositionState {
+  const attempts = storage.executionAttempts;
+  if (attempts.getBlockingAttempt()) return "UNKNOWN";
+
+  const latest = attempts.getLatestAttempt();
+  if (!latest || latest.status === "FAILED") return "FLAT";
+  return "UNKNOWN";
 }

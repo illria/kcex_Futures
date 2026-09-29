@@ -7,7 +7,7 @@ export interface StorageMigration {
   sql: string;
 }
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export const STORAGE_MIGRATIONS: readonly StorageMigration[] = [
   {
@@ -72,6 +72,59 @@ export const STORAGE_MIGRATIONS: readonly StorageMigration[] = [
       );
 
       CREATE INDEX audit_events_created_at_idx ON audit_events(created_at DESC, id DESC);
+    `,
+  },
+  {
+    version: 2,
+    name: "durable_execution_attempt_confirmation",
+    sql: `
+      CREATE TABLE execution_attempts (
+        attempt_id TEXT PRIMARY KEY NOT NULL,
+        preview_id TEXT NOT NULL UNIQUE,
+        provider TEXT NOT NULL CHECK(provider = 'FIXTURE'),
+        symbol TEXT NOT NULL CHECK(symbol = 'GPS_USDT'),
+        side TEXT NOT NULL CHECK(side IN ('LONG', 'SHORT')),
+        margin_usdt REAL NOT NULL CHECK(margin_usdt > 0 AND margin_usdt <= 50),
+        leverage REAL NOT NULL CHECK(leverage > 0 AND leverage <= 10),
+        status TEXT NOT NULL CHECK(status IN ('SUBMITTING', 'SUBMITTED', 'CONFIRMING', 'CONFIRMED', 'FAILED', 'UNKNOWN')),
+        fixture_submission_id TEXT,
+        outcome TEXT CHECK(outcome IS NULL OR outcome = 'NOT_SUBMITTED'),
+        failure_kind TEXT CHECK(failure_kind IS NULL OR failure_kind IN ('EXECUTION_FAILED', 'TIMEOUT')),
+        reason_code TEXT CHECK(reason_code IS NULL OR reason_code IN (
+          'EXECUTION_PROVIDER_DISABLED', 'ARM_REQUIRED', 'ARM_EXPIRED', 'PREVIEW_EXPIRED',
+          'PREVIEW_INVALID', 'EXECUTION_BUSY', 'RISK_PRECHECK_BLOCKED', 'STORAGE_DEGRADED',
+          'EXECUTION_FAILED', 'CONFIRMATION_SOURCE_UNKNOWN', 'CONFIRMATION_EVIDENCE_MISMATCH',
+          'CONFIRMATION_TIMEOUT', 'SUBMISSION_OUTCOME_UNKNOWN'
+        )),
+        evidence_json TEXT CHECK(evidence_json IS NULL OR json_valid(evidence_json)),
+        submitted_at TEXT,
+        confirmation_started_at TEXT,
+        confirmed_at TEXT,
+        failed_at TEXT,
+        unknown_at TEXT,
+        observed_side TEXT CHECK(observed_side IS NULL OR observed_side IN ('LONG', 'SHORT')),
+        observed_entry_price REAL CHECK(observed_entry_price IS NULL OR observed_entry_price > 0),
+        observed_size REAL CHECK(observed_size IS NULL OR observed_size > 0),
+        observed_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1 CHECK(version >= 1),
+        CHECK(status != 'CONFIRMED' OR (
+          confirmed_at IS NOT NULL AND evidence_json IS NOT NULL
+          AND json_extract(evidence_json, '$.kind') = 'MATCHED_OPEN'
+        )),
+        CHECK(status != 'SUBMITTED' OR (fixture_submission_id IS NOT NULL AND submitted_at IS NOT NULL)),
+        CHECK(status != 'CONFIRMING' OR confirmation_started_at IS NOT NULL),
+        CHECK(status != 'FAILED' OR (failed_at IS NOT NULL AND failure_kind IS NOT NULL AND outcome = 'NOT_SUBMITTED')),
+        CHECK(outcome IS NULL OR status = 'FAILED'),
+        CHECK(status != 'UNKNOWN' OR (unknown_at IS NOT NULL AND reason_code IS NOT NULL))
+      );
+
+      CREATE INDEX execution_attempts_created_at_idx ON execution_attempts(created_at DESC, attempt_id DESC);
+      CREATE INDEX execution_attempts_status_idx ON execution_attempts(status);
+      CREATE UNIQUE INDEX execution_attempts_one_unresolved_idx
+        ON execution_attempts(symbol)
+        WHERE status IN ('SUBMITTING', 'SUBMITTED', 'CONFIRMING', 'UNKNOWN');
     `,
   },
 ];

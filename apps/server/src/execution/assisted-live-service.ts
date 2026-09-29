@@ -12,12 +12,16 @@ import {
   type AssistedExecutionState,
   type AssistedLiveOrderIntent,
   type AssistedLivePreview,
+  type AssistedSubmissionSummary,
+  type ExecutionAdapterResult,
   type ExecutionConfirmInput,
   type ExecutionFailureKind,
+  type ExecutionAttemptRecord,
   type ExecutionPreviewInput,
   type ExecutionProvider,
   type ExecutionReasonCode,
   type ExecutionStatus,
+  type PositionConfirmationEvidence,
 } from "../../../../packages/shared/src/execution.js";
 import { RiskTradeIntentSchema, type RiskDecision } from "../../../../packages/shared/src/risk.js";
 import type { RiskService } from "../risk/risk-service.js";
@@ -27,6 +31,13 @@ import type { ExecutionAdapter } from "./execution-adapter.js";
 import { ExecutionArmService, EXECUTION_ARM_ACKNOWLEDGEMENT } from "./execution-arm.js";
 import { AssistedExecutionError } from "./execution-errors.js";
 import type { ExecutionPositionSource } from "./execution-position-source.js";
+import type { ExecutionAttemptPatch } from "../storage/execution-attempt-repository.js";
+import {
+  FixturePositionConfirmationSource,
+  PositionConfirmationService,
+  type PositionConfirmationResult,
+  type PositionConfirmationSource,
+} from "./position-confirmation-service.js";
 
 export const DEFAULT_PREVIEW_TTL_MS = 60_000;
 export const DEFAULT_EXECUTION_SUBMIT_TIMEOUT_MS = 10_000;
@@ -38,6 +49,9 @@ export interface AssistedLiveServiceOptions {
   risk: RiskService;
   events: EventBus;
   positionSource: ExecutionPositionSource;
+  confirmationSource?: PositionConfirmationSource;
+  confirmationService?: PositionConfirmationService;
+  onConfirmed?: () => void;
   now?: () => Date;
   idGenerator?: () => string;
   confirmationTokenGenerator?: () => string;
@@ -54,6 +68,7 @@ export class AssistedLiveService {
   private readonly arm: ExecutionArmService;
   private readonly previewTtlMs: number;
   private readonly submitTimeoutMs: number;
+  private readonly positionConfirmation: PositionConfirmationService;
   private inFlight = false;
   private disarmRequestedDuringPrecheck = false;
   private activePreview: AssistedLivePreview | null = null;
@@ -75,6 +90,10 @@ export class AssistedLiveService {
     const provider = ExecutionProviderSchema.parse(options.provider);
     if (options.adapter.provider !== provider) throw new TypeError("Execution adapter does not match its configured provider.");
     this.arm = options.armService ?? new ExecutionArmService(() => this.clockNow().getTime());
+    this.positionConfirmation = options.confirmationService ?? new PositionConfirmationService({
+      source: options.confirmationSource ?? new FixturePositionConfirmationSource(undefined, this.now),
+      now: this.now,
+    });
     this.state = AssistedExecutionStateSchema.parse({
       status: "DISARMED",
       provider,
@@ -86,6 +105,43 @@ export class AssistedLiveService {
     });
   }
 
+  /** Converts any interrupted in-flight attempt to durable UNKNOWN before the HTTP server listens. */
+  async recover(): Promise<AssistedExecutionState> {
+    this.arm.disarm();
+    this.clearPrivatePreview();
+    try {
+      this.assertStorageReady();
+      if (this.options.storage.executionAttempts.getBlockingAttemptCount() > 1) {
+        this.replaceState("HALTED", ["STORAGE_DEGRADED"], null);
+        return this.getState();
+      }
+      let blocking = this.options.storage.executionAttempts.getBlockingAttempt();
+      if (blocking && ["SUBMITTING", "SUBMITTED", "CONFIRMING"].includes(blocking.status)) {
+        blocking = this.options.storage.executionAttempts.transitionAttemptWithAudit(
+          blocking.attemptId,
+          blocking.version,
+          "UNKNOWN",
+          { reason: "SUBMISSION_OUTCOME_UNKNOWN", unknownAt: this.timestamp() },
+          attemptAudit(blocking, "LIVE_OUTCOME_UNKNOWN", "An interrupted fixture attempt was recovered as unknown.", {
+            reason: "SUBMISSION_OUTCOME_UNKNOWN",
+          }),
+        );
+        await this.recordUnknownRisk(blocking.attemptId);
+        this.publishUnknown(blocking, null);
+      }
+      const latest = this.options.storage.executionAttempts.getLatestAttempt();
+      if (latest) {
+        const restoredStatus = statusForAttempt(latest.status);
+        this.replaceState(restoredStatus, latest.status === "UNKNOWN" ? [latest.reason ?? "SUBMISSION_OUTCOME_UNKNOWN"] : [], null, toSummary(latest));
+        if (latest.status === "UNKNOWN") await this.recordUnknownRisk(latest.attemptId);
+        if (latest.status === "CONFIRMED") await this.options.risk.recordExecutionSuccess(latest.attemptId);
+      }
+    } catch {
+      this.replaceState("HALTED", ["STORAGE_DEGRADED"], null);
+    }
+    return this.getState();
+  }
+
   getState(): AssistedExecutionState {
     this.syncArmExpiry();
     return AssistedExecutionStateSchema.parse(this.state);
@@ -94,6 +150,7 @@ export class AssistedLiveService {
   armRuntime(acknowledgement: string): AssistedExecutionState {
     this.assertNotBusy();
     this.assertFixtureProvider();
+    this.assertNoBlockingAttempt();
     if (acknowledgement !== EXECUTION_ARM_ACKNOWLEDGEMENT) {
       throw new AssistedExecutionError("INVALID_ARM_ACKNOWLEDGEMENT", 400);
     }
@@ -116,14 +173,19 @@ export class AssistedLiveService {
     this.arm.disarm();
     this.clearPrivatePreview();
     if (this.inFlight && this.state.status !== "SUBMITTING") this.disarmRequestedDuringPrecheck = true;
-    const currentStatus = this.inFlight ? this.state.status : "DISARMED";
-    let reasons: ExecutionReasonCode[] = [];
+    const blocking = this.options.storage.isReady ? this.options.storage.executionAttempts.getBlockingAttempt() : null;
+    const currentStatus = blocking?.status === "UNKNOWN"
+      ? "UNKNOWN"
+      : this.inFlight ? this.state.status : "DISARMED";
+    let reasons: ExecutionReasonCode[] = blocking?.status === "UNKNOWN" && blocking.reason
+      ? [blocking.reason]
+      : [];
     try {
       this.audit("LIVE_DISARMED", { provider: this.options.provider });
     } catch {
       reasons = ["STORAGE_DEGRADED"];
     }
-    this.replaceState(currentStatus, reasons, null);
+    this.replaceState(currentStatus, reasons, null, blocking ? toSummary(blocking) : this.state.lastSubmission);
     return this.getState();
   }
 
@@ -131,6 +193,7 @@ export class AssistedLiveService {
     this.syncArmExpiry();
     this.assertNotBusy();
     this.assertFixtureProvider();
+    this.assertNoBlockingAttempt();
     if (!this.arm.isArmed()) throw new AssistedExecutionError("ARM_REQUIRED");
     this.assertStorageReady();
     const input = ExecutionPreviewInputSchema.parse(inputValue);
@@ -174,6 +237,15 @@ export class AssistedLiveService {
     if (this.inFlight) throw new AssistedExecutionError("EXECUTION_BUSY");
     this.syncArmExpiry();
     this.assertFixtureProvider();
+    try {
+      this.assertNoBlockingAttempt();
+    } catch (error) {
+      if (!(error instanceof AssistedExecutionError) || error.code !== "STORAGE_DEGRADED") throw error;
+      this.arm.disarm();
+      this.clearPrivatePreview();
+      this.replaceState("HALTED", ["STORAGE_DEGRADED"], null);
+      return this.getState();
+    }
     if (!this.arm.isArmed()) throw new AssistedExecutionError("ARM_REQUIRED");
     const input = ExecutionConfirmInputSchema.parse(inputValue);
     const preview = this.activePreview;
@@ -207,24 +279,13 @@ export class AssistedLiveService {
       try {
         const value = await this.options.positionSource.getPositionState();
         if (value === "FLAT" || value === "OPEN" || value === "UNKNOWN") positionState = value;
-      } catch {
-        positionState = "UNKNOWN";
-      }
+      } catch { positionState = "UNKNOWN"; }
 
       let decision: RiskDecision;
       try {
         decision = await this.options.risk.evaluatePreTrade(
-          RiskTradeIntentSchema.parse({
-            mode: intent.mode,
-            symbol: intent.symbol,
-            side: intent.side,
-            marginUsdt: intent.marginUsdt,
-            leverage: intent.leverage,
-          }),
-          {
-            liveTrading: wasArmed && this.options.provider === "FIXTURE",
-            positionState,
-          },
+          RiskTradeIntentSchema.parse({ mode: intent.mode, symbol: intent.symbol, side: intent.side, marginUsdt: intent.marginUsdt, leverage: intent.leverage }),
+          { liveTrading: wasArmed && this.options.provider === "FIXTURE", positionState },
         );
       } catch {
         this.replaceState("HALTED", ["STORAGE_DEGRADED"]);
@@ -233,100 +294,295 @@ export class AssistedLiveService {
 
       if (!decision.allowed) {
         let auditFailed = false;
-        try {
-          this.audit("LIVE_PRECHECK_BLOCKED", { ...previewAuditPayload(preview), riskReasons: decision.reasons });
-        } catch {
-          auditFailed = true;
-        }
-        this.replaceState(
-          auditFailed || isFailClosedRiskDecision(decision) ? "HALTED" : "BLOCKED",
-          auditFailed ? ["STORAGE_DEGRADED"] : ["RISK_PRECHECK_BLOCKED"],
-        );
+        try { this.audit("LIVE_PRECHECK_BLOCKED", { ...previewAuditPayload(preview), riskReasons: decision.reasons }); }
+        catch { auditFailed = true; }
+        this.replaceState(auditFailed || isFailClosedRiskDecision(decision) ? "HALTED" : "BLOCKED",
+          auditFailed ? ["STORAGE_DEGRADED"] : ["RISK_PRECHECK_BLOCKED"]);
         return this.getState();
       }
-
       if (this.disarmRequestedDuringPrecheck) {
         this.replaceState("DISARMED", [], null);
         return this.getState();
       }
 
+      let attempt: ExecutionAttemptRecord;
       try {
-        this.audit("LIVE_SUBMIT_ATTEMPT", previewAuditPayload(preview));
+        this.assertStorageReady();
+        attempt = this.options.storage.executionAttempts.createSubmittingAttemptWithAudit({
+          attemptId: this.idGenerator(),
+          previewId: preview.previewId,
+          symbol: preview.symbol,
+          side: preview.side,
+          marginUsdt: preview.marginUsdt,
+          leverage: preview.leverage,
+          auditPayload: previewAuditPayload(preview),
+        });
       } catch {
         this.replaceState("HALTED", ["STORAGE_DEGRADED"]);
         return this.getState();
       }
+      this.replaceState("SUBMITTING", [], null, toSummary(attempt));
 
-      this.replaceState("SUBMITTING", []);
-      const result = await this.submitWithTimeout(preview);
-      const baseSummary = {
-        previewId: preview.previewId,
-        provider: "FIXTURE" as const,
-        symbol: preview.symbol,
-        side: preview.side,
-      };
-
-      if (result.status === "FAILED") {
-        try {
-          await this.options.risk.recordExecutionFailure({ failureKind: riskFailureKind(result.failureKind) });
-        } catch {
-          this.replaceState("HALTED", ["STORAGE_DEGRADED"], null);
-          return this.getState();
-        }
-        let auditFailed = false;
-        try {
-          this.audit("LIVE_SUBMIT_FAILED", { ...previewAuditPayload(preview), failureKind: result.failureKind });
-        } catch {
-          auditFailed = true;
-        }
-        this.replaceState(auditFailed ? "HALTED" : "FAILED", auditFailed ? ["STORAGE_DEGRADED"] : ["EXECUTION_FAILED"], null, {
-          ...baseSummary,
-          status: "FAILED",
-          failureKind: result.failureKind,
-          failedAt: result.failedAt,
-        });
+      const adapterOutcome = await this.submitWithTimeout(preview);
+      if (adapterOutcome.kind === "AMBIGUOUS") {
+        await this.markUnknown(attempt, "SUBMISSION_OUTCOME_UNKNOWN", null);
         return this.getState();
       }
 
-      let auditFailed = false;
+      if (adapterOutcome.result.status === "FAILED") {
+        let failed: ExecutionAttemptRecord;
+        try {
+          failed = this.options.storage.executionAttempts.transitionAttemptWithAudit(attempt.attemptId, attempt.version, "FAILED", {
+            outcome: "NOT_SUBMITTED",
+            failureKind: adapterOutcome.result.failureKind,
+            failedAt: adapterOutcome.result.failedAt,
+          }, attemptAudit(attempt, "LIVE_ATTEMPT_NOT_SUBMITTED", "Fixture adapter explicitly reported no submission.", {
+            outcome: "NOT_SUBMITTED",
+            failureKind: adapterOutcome.result.failureKind,
+          }));
+          await this.options.risk.recordExecutionFailure({
+            failureKind: riskFailureKind(adapterOutcome.result.failureKind),
+            executionAttemptId: attempt.attemptId,
+          });
+        } catch {
+          this.replaceState("HALTED", ["STORAGE_DEGRADED"], null, toSummary(attempt));
+          return this.getState();
+        }
+        this.replaceState("FAILED", ["EXECUTION_FAILED"], null, toSummary(failed));
+        return this.getState();
+      }
+
+      let submitted: ExecutionAttemptRecord;
       try {
-        this.audit("LIVE_SUBMITTED_FIXTURE", {
-          ...previewAuditPayload(preview),
-          fixtureSubmissionId: result.fixtureSubmissionId,
-          submittedAt: result.submittedAt,
-        });
+        submitted = this.options.storage.executionAttempts.transitionAttemptWithAudit(attempt.attemptId, attempt.version, "SUBMITTED", {
+          fixtureSubmissionId: adapterOutcome.result.fixtureSubmissionId,
+          submittedAt: adapterOutcome.result.submittedAt,
+        }, attemptAudit(attempt, "LIVE_ATTEMPT_SUBMITTED", "Fixture adapter returned a validated SUBMITTED result."));
       } catch {
-        auditFailed = true;
+        await this.markUnknown(attempt, "SUBMISSION_OUTCOME_UNKNOWN", null);
+        return this.getState();
       }
       this.options.events.publish({
         version: 1,
         type: "execution.submitted",
         timestamp: this.timestamp(),
         payload: {
+          attemptId: attempt.attemptId,
           previewId: preview.previewId,
           provider: "FIXTURE",
           symbol: preview.symbol,
           side: preview.side,
-          submittedAt: result.submittedAt,
+          submittedAt: adapterOutcome.result.submittedAt,
         },
       });
-      this.replaceState(auditFailed ? "HALTED" : "SUBMITTED", auditFailed ? ["STORAGE_DEGRADED"] : [], null, {
-        ...baseSummary,
-        status: "SUBMITTED",
-        fixtureSubmissionId: result.fixtureSubmissionId,
-        submittedAt: result.submittedAt,
-      });
-      return this.getState();
+      this.replaceState("SUBMITTED", [], null, toSummary(submitted));
+      return await this.confirmPosition(submitted, preview);
     } finally {
       this.inFlight = false;
       this.disarmRequestedDuringPrecheck = false;
     }
   }
 
+  /** Manual, read-only evidence reconciliation. This path never invokes ExecutionAdapter.submit(). */
+  async reconcile(attemptId: string): Promise<AssistedExecutionState> {
+    if (this.inFlight) throw new AssistedExecutionError("CONFIRMATION_BUSY");
+    this.assertFixtureProvider();
+    this.assertStorageReady();
+    const attempt = this.options.storage.executionAttempts.getAttempt(attemptId);
+    if (!attempt || attempt.status !== "UNKNOWN") throw new AssistedExecutionError("EXECUTION_ATTEMPT_NOT_FOUND", 404);
+    this.inFlight = true;
+    try {
+      const confirming = this.options.storage.executionAttempts.transitionAttemptWithAudit(
+        attempt.attemptId,
+        attempt.version,
+        "CONFIRMING",
+        {
+          reason: null,
+          unknownAt: null,
+          evidence: null,
+          confirmationStartedAt: this.timestamp(),
+          ...observedEvidencePatch(null),
+        },
+        attemptAudit(attempt, "LIVE_RECONCILIATION_STARTED", "Manual read-only fixture evidence reconciliation started."),
+      );
+      const previewContext = confirmationContext(confirming, this.timestamp());
+      this.publishConfirming(confirming);
+      this.replaceState("CONFIRMING", [], null, toSummary(confirming));
+      return await this.evaluatePositionEvidence(confirming, previewContext, true);
+    } catch {
+      const persisted = this.options.storage.executionAttempts.getAttempt(attempt.attemptId);
+      if (persisted?.status === "UNKNOWN") this.replaceState("UNKNOWN", [persisted.reason ?? "SUBMISSION_OUTCOME_UNKNOWN"], null, toSummary(persisted));
+      else this.replaceState("HALTED", ["STORAGE_DEGRADED"]);
+      return this.getState();
+    } finally {
+      this.inFlight = false;
+    }
+  }
+
   close(): void {
     this.arm.disarm();
     this.clearPrivatePreview();
-    if (!this.inFlight) this.replaceState("DISARMED", [], null);
+    if (this.inFlight) return;
+    try {
+      const blocking = this.options.storage.isReady ? this.options.storage.executionAttempts.getBlockingAttempt() : null;
+      if (blocking) {
+        this.replaceState(statusForAttempt(blocking.status), blocking.status === "UNKNOWN" && blocking.reason ? [blocking.reason] : [], null, toSummary(blocking));
+      } else if (!["CONFIRMED", "FAILED", "HALTED"].includes(this.state.status)) {
+        this.replaceState("DISARMED", [], null);
+      }
+    } catch {
+      this.replaceState("HALTED", ["STORAGE_DEGRADED"], null);
+    }
+  }
+
+  private async confirmPosition(attempt: ExecutionAttemptRecord, preview: AssistedLivePreview): Promise<AssistedExecutionState> {
+    let confirming: ExecutionAttemptRecord;
+    try {
+      confirming = this.options.storage.executionAttempts.transitionAttemptWithAudit(
+        attempt.attemptId,
+        attempt.version,
+        "CONFIRMING",
+        { confirmationStartedAt: this.timestamp() },
+        attemptAudit(attempt, "LIVE_CONFIRMATION_STARTED", "Bounded fixture position confirmation started."),
+      );
+    } catch {
+      return this.markUnknown(attempt, "SUBMISSION_OUTCOME_UNKNOWN", null);
+    }
+    this.publishConfirming(confirming);
+    this.replaceState("CONFIRMING", [], null, toSummary(confirming));
+    return this.evaluatePositionEvidence(confirming, preview);
+  }
+
+  private async evaluatePositionEvidence(
+    attempt: ExecutionAttemptRecord,
+    context: AssistedLivePreview | ReturnType<typeof confirmationContext>,
+    reconciliation = false,
+  ): Promise<AssistedExecutionState> {
+    let outcome: PositionConfirmationResult;
+    try {
+      outcome = await this.positionConfirmation.confirmContext(context);
+    } catch {
+      outcome = { status: "UNKNOWN", reason: "CONFIRMATION_SOURCE_UNKNOWN", evidence: null };
+    }
+    if (outcome.status === "UNKNOWN") return this.markUnknown(attempt, outcome.reason, outcome.evidence, reconciliation);
+
+    let confirmed: ExecutionAttemptRecord;
+    const confirmedAt = this.timestamp();
+    try {
+      confirmed = this.options.storage.executionAttempts.transitionAttemptWithAudit(attempt.attemptId, attempt.version, "CONFIRMED", {
+        evidence: outcome.evidence,
+        confirmedAt,
+        observedSide: outcome.evidence.side,
+        observedEntryPrice: outcome.evidence.entryPrice,
+        observedSize: outcome.evidence.size,
+        observedAt: outcome.evidence.observedAt,
+      }, attemptAudit(attempt, "LIVE_POSITION_CONFIRMED_FIXTURE", "Fresh fixture position evidence matched the submitted intent."));
+      await this.options.risk.recordExecutionSuccess(attempt.attemptId, "OPEN");
+      this.options.onConfirmed?.();
+    } catch {
+      const persisted = this.options.storage.executionAttempts.getAttempt(attempt.attemptId);
+      if (persisted?.status === "CONFIRMED") {
+        this.replaceState("CONFIRMED", [], null, toSummary(persisted));
+      } else {
+        this.replaceState("HALTED", ["STORAGE_DEGRADED"], null, toSummary(attempt));
+      }
+      return this.getState();
+    }
+    this.options.events.publish({
+      version: 1,
+      type: "execution.confirmed",
+      timestamp: this.timestamp(),
+      payload: {
+        attemptId: attempt.attemptId,
+        previewId: attempt.previewId,
+        provider: "FIXTURE",
+        symbol: attempt.symbol,
+        side: attempt.side,
+        submittedAt: confirmed.submittedAt,
+        confirmedAt,
+        observedEntryPrice: outcome.evidence.entryPrice,
+        observedSize: outcome.evidence.size,
+        observedAt: outcome.evidence.observedAt,
+        evidence: outcome.evidence,
+      },
+    });
+    this.replaceState("CONFIRMED", [], null, toSummary(confirmed));
+    return this.getState();
+  }
+
+  private async markUnknown(
+    attemptInput: ExecutionAttemptRecord,
+    reason: ExecutionReasonCode,
+    evidence: PositionConfirmationEvidence | null,
+    reconciliation = false,
+  ): Promise<AssistedExecutionState> {
+    let attempt = this.options.storage.executionAttempts.getAttempt(attemptInput.attemptId) ?? attemptInput;
+    if (attempt.status !== "UNKNOWN") {
+      try {
+        const eventType = reconciliation ? "LIVE_RECONCILIATION_UNKNOWN" : "LIVE_OUTCOME_UNKNOWN";
+        attempt = this.options.storage.executionAttempts.transitionAttemptWithAudit(attempt.attemptId, attempt.version, "UNKNOWN", {
+          reason,
+          evidence,
+          unknownAt: this.timestamp(),
+          ...observedEvidencePatch(evidence),
+        }, attemptAudit(attempt, eventType, reconciliation
+          ? "Read-only fixture reconciliation remains unknown."
+          : "Fixture execution outcome is unknown and blocks new entries.", { reason }));
+      } catch {
+        this.replaceState("HALTED", ["STORAGE_DEGRADED"], null, toSummary(attempt));
+        return this.getState();
+      }
+    }
+    try {
+      await this.recordUnknownRisk(attempt.attemptId);
+    } catch {
+      // The durable unresolved attempt still blocks all new entries if audit or risk storage degrades.
+    }
+    this.publishUnknown(attempt, evidence);
+    this.replaceState("UNKNOWN", [reason], null, toSummary(attempt));
+    return this.getState();
+  }
+
+  private async recordUnknownRisk(attemptId: string): Promise<void> {
+    await this.options.risk.recordExecutionFailure({ failureKind: "UNKNOWN_RESULT", executionAttemptId: attemptId });
+  }
+
+  private publishConfirming(attempt: ExecutionAttemptRecord): void {
+    this.options.events.publish({
+      version: 1,
+      type: "execution.confirming",
+      timestamp: this.timestamp(),
+      payload: {
+        attemptId: attempt.attemptId,
+        previewId: attempt.previewId,
+        provider: "FIXTURE",
+        symbol: attempt.symbol,
+        side: attempt.side,
+        submittedAt: attempt.submittedAt,
+      },
+    });
+  }
+
+  private publishUnknown(
+    attempt: ExecutionAttemptRecord,
+    evidence: PositionConfirmationEvidence | null,
+  ): void {
+    this.options.events.publish({
+      version: 1,
+      type: "execution.unknown",
+      timestamp: this.timestamp(),
+      payload: {
+        attemptId: attempt.attemptId,
+        previewId: attempt.previewId,
+        provider: "FIXTURE",
+        symbol: attempt.symbol,
+        side: attempt.side,
+        submittedAt: attempt.submittedAt,
+        unknownAt: attempt.unknownAt ?? this.timestamp(),
+        reason: attempt.reason ?? "SUBMISSION_OUTCOME_UNKNOWN",
+        evidence: evidence ?? attempt.evidence,
+      },
+    });
   }
 
   private assertFixtureProvider(): void {
@@ -335,6 +591,13 @@ export class AssistedLiveService {
 
   private assertNotBusy(): void {
     if (this.inFlight) throw new AssistedExecutionError("EXECUTION_BUSY");
+  }
+
+  private assertNoBlockingAttempt(): void {
+    this.assertStorageReady();
+    if (this.options.storage.executionAttempts.getBlockingAttempt()) {
+      throw new AssistedExecutionError("UNRESOLVED_EXECUTION_ATTEMPT");
+    }
   }
 
   private assertStorageReady(): void {
@@ -348,7 +611,7 @@ export class AssistedLiveService {
     this.options.storage.auditEvents.appendAuditEvent({
       category: eventType === "LIVE_PRECHECK_BLOCKED" ? "RISK" : "TRADING",
       eventType,
-      severity: eventType === "LIVE_SUBMIT_FAILED" || eventType === "LIVE_PRECHECK_BLOCKED" ? "WARN" : "INFO",
+      severity: eventType.includes("FAILED") || eventType === "LIVE_PRECHECK_BLOCKED" || eventType.endsWith("UNKNOWN") ? "WARN" : "INFO",
       message: auditMessage(eventType),
       payload,
     });
@@ -358,23 +621,22 @@ export class AssistedLiveService {
     try {
       const value = this.options.referencePrice?.();
       return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
-    } catch {
-      return null;
-    }
+    } catch { return null; }
   }
 
-  private async submitWithTimeout(preview: AssistedLivePreview) {
+  private async submitWithTimeout(preview: AssistedLivePreview): Promise<
+    | { kind: "VALID"; result: ExecutionAdapterResult }
+    | { kind: "AMBIGUOUS" }
+  > {
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_resolve, reject) => {
       timeoutId = setTimeout(() => reject(new SubmissionTimeoutError()), this.submitTimeoutMs);
     });
     try {
       const result = await Promise.race([this.options.adapter.submit(preview), timeout]);
-      return ExecutionAdapterResultSchema.parse(result);
-    } catch (error) {
-      const kind = error instanceof SubmissionTimeoutError ? "TIMEOUT" : "EXECUTION_FAILED";
-      const failedAt = this.timestamp();
-      return ExecutionAdapterResultSchema.parse({ status: "FAILED", failureKind: kind, failedAt });
+      return { kind: "VALID", result: ExecutionAdapterResultSchema.parse(result) };
+    } catch {
+      return { kind: "AMBIGUOUS" };
     } finally {
       if (timeoutId !== undefined) clearTimeout(timeoutId);
     }
@@ -411,15 +673,79 @@ export class AssistedLiveService {
     this.options.events.publish({ version: 1, type: "execution.state", timestamp: this.timestamp(), payload: next });
   }
 
-  private timestamp(): string {
-    return this.clockNow().toISOString();
-  }
+  private timestamp(): string { return this.clockNow().toISOString(); }
 
   private clockNow(): Date {
     const value = this.now();
     if (!(value instanceof Date) || !Number.isFinite(value.getTime())) throw new Error("Execution clock is invalid.");
     return value;
   }
+}
+
+function toSummary(attempt: ExecutionAttemptRecord): AssistedSubmissionSummary {
+  const base = {
+    attemptId: attempt.attemptId,
+    previewId: attempt.previewId,
+    provider: "FIXTURE" as const,
+    symbol: attempt.symbol,
+    side: attempt.side,
+  };
+  if (attempt.status === "SUBMITTING") return { ...base, status: "SUBMITTING" };
+  if (attempt.status === "SUBMITTED") {
+    if (!attempt.fixtureSubmissionId || !attempt.submittedAt) throw new Error("Stored submitted attempt is incomplete.");
+    return { ...base, status: "SUBMITTED", fixtureSubmissionId: attempt.fixtureSubmissionId, submittedAt: attempt.submittedAt };
+  }
+  if (attempt.status === "CONFIRMING") {
+    return { ...base, status: "CONFIRMING", fixtureSubmissionId: attempt.fixtureSubmissionId, submittedAt: attempt.submittedAt };
+  }
+  if (attempt.status === "CONFIRMED") {
+    if (!attempt.confirmedAt || attempt.evidence?.kind !== "MATCHED_OPEN") throw new Error("Stored confirmed attempt is incomplete.");
+    return {
+      ...base,
+      status: "CONFIRMED",
+      fixtureSubmissionId: attempt.fixtureSubmissionId,
+      submittedAt: attempt.submittedAt,
+      confirmedAt: attempt.confirmedAt,
+      evidence: attempt.evidence,
+    };
+  }
+  if (attempt.status === "FAILED") {
+    if (attempt.outcome !== "NOT_SUBMITTED" || !attempt.failureKind || !attempt.failedAt) throw new Error("Stored failed attempt is incomplete.");
+    return { ...base, status: "FAILED", outcome: "NOT_SUBMITTED", failureKind: attempt.failureKind, failedAt: attempt.failedAt };
+  }
+  return {
+    ...base,
+    status: "UNKNOWN",
+    fixtureSubmissionId: attempt.fixtureSubmissionId,
+    submittedAt: attempt.submittedAt,
+    unknownAt: attempt.unknownAt ?? attempt.updatedAt,
+    reason: attempt.reason ?? "SUBMISSION_OUTCOME_UNKNOWN",
+    evidence: attempt.evidence,
+  };
+}
+
+function statusForAttempt(status: ExecutionAttemptRecord["status"]): ExecutionStatus {
+  switch (status) {
+    case "SUBMITTING": return "SUBMITTING";
+    case "SUBMITTED": return "SUBMITTED";
+    case "CONFIRMING": return "CONFIRMING";
+    case "CONFIRMED": return "CONFIRMED";
+    case "FAILED": return "FAILED";
+    case "UNKNOWN": return "UNKNOWN";
+  }
+}
+
+function confirmationContext(
+  attempt: ExecutionAttemptRecord,
+  createdAt: string,
+) {
+  return {
+    previewId: attempt.previewId,
+    symbol: attempt.symbol,
+    side: attempt.side,
+    referencePrice: null,
+    createdAt,
+  };
 }
 
 function constantTimeTokenEquals(expected: string, actual: string): boolean {
@@ -441,15 +767,56 @@ function previewAuditPayload(preview: AssistedLivePreview): Record<string, unkno
   };
 }
 
+function attemptAudit(
+  attempt: ExecutionAttemptRecord,
+  eventType: string,
+  message: string,
+  extra: Record<string, unknown> = {},
+) {
+  return {
+    category: "TRADING" as const,
+    eventType,
+    severity: eventType.includes("UNKNOWN") ? "WARN" as const : "INFO" as const,
+    message,
+    payload: {
+      attemptId: attempt.attemptId,
+      previewId: attempt.previewId,
+      provider: attempt.provider,
+      symbol: attempt.symbol,
+      side: attempt.side,
+      ...extra,
+    },
+  };
+}
+
+function observedEvidencePatch(evidence: PositionConfirmationEvidence | null): ExecutionAttemptPatch {
+  if (evidence?.kind === "MATCHED_OPEN") {
+    return {
+      observedSide: evidence.side,
+      observedEntryPrice: evidence.entryPrice,
+      observedSize: evidence.size,
+      observedAt: evidence.observedAt,
+    };
+  }
+  return {
+    observedSide: null,
+    observedEntryPrice: null,
+    observedSize: null,
+    observedAt: evidence?.observedAt ?? null,
+  };
+}
+
 function auditMessage(eventType: string): string {
   switch (eventType) {
     case "LIVE_ARMED": return "Local assisted execution was armed.";
     case "LIVE_DISARMED": return "Local assisted execution was disarmed.";
     case "LIVE_PREVIEW_CREATED": return "A fixture-only assisted execution preview was created.";
     case "LIVE_PRECHECK_BLOCKED": return "Assisted execution was blocked by the risk precheck.";
-    case "LIVE_SUBMIT_ATTEMPT": return "A single fixture submission attempt began.";
-    case "LIVE_SUBMITTED_FIXTURE": return "The fixture adapter accepted a submission attempt.";
-    case "LIVE_SUBMIT_FAILED": return "The fixture submission attempt failed.";
+    case "LIVE_ATTEMPT_SUBMITTING": return "A durable fixture attempt was recorded before adapter invocation.";
+    case "LIVE_ATTEMPT_SUBMITTED": return "The fixture adapter accepted a submission attempt.";
+    case "LIVE_ATTEMPT_NOT_SUBMITTED": return "The fixture adapter explicitly confirmed no submission.";
+    case "LIVE_OUTCOME_UNKNOWN": return "The fixture attempt outcome is unknown and requires manual reconciliation.";
+    case "LIVE_POSITION_CONFIRMED_FIXTURE": return "Fixture position evidence matched the submitted intent.";
     default: return "Assisted execution event.";
   }
 }
@@ -460,10 +827,7 @@ function riskFailureKind(kind: ExecutionFailureKind): "EXECUTION_FAILED" | "TIME
 
 function isFailClosedRiskDecision(decision: RiskDecision): boolean {
   return decision.reasons.some((reason) => [
-    "POSITION_UNKNOWN",
-    "CONSECUTIVE_FAILURE_LIMIT",
-    "KILL_SWITCH_UNKNOWN",
-    "STORAGE_DEGRADED",
+    "POSITION_UNKNOWN", "CONSECUTIVE_FAILURE_LIMIT", "KILL_SWITCH_UNKNOWN", "STORAGE_DEGRADED",
   ].includes(reason));
 }
 

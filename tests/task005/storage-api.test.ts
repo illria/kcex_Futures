@@ -73,7 +73,7 @@ describe("read-only storage APIs and dashboard history", () => {
     const healthResponse = await fetch(`${url}/api/v1/storage/health`);
     expect(healthResponse.status).toBe(200);
     const health = StorageHealthSchema.parse(await healthResponse.json());
-    expect(health).toEqual({ status: "READY", schemaVersion: 1 });
+    expect(health).toEqual({ status: "READY", schemaVersion: 2 });
     expect(Object.keys(health)).toEqual(["status", "schemaVersion"]);
 
     const dashboard = await (await fetch(`${url}/api/v1/dashboard/snapshot`)).json() as {
@@ -113,7 +113,7 @@ describe("read-only storage APIs and dashboard history", () => {
     expect((await fetch(`${url}/api/v1/history/trades`)).status).toBe(503);
   });
 
-  it.each(["schema_migrations", "trades", "trade_events", "daily_plans", "audit_events"])(
+  it.each(["schema_migrations", "trades", "trade_events", "daily_plans", "audit_events", "execution_attempts"])(
     "reports DEGRADED when required table %s is missing",
     async (table) => {
       const { url, storage } = await startServer();

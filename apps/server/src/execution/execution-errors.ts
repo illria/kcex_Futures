@@ -6,7 +6,10 @@ export type AssistedExecutionErrorCode =
   | "PREVIEW_EXPIRED"
   | "EXECUTION_BUSY"
   | "STORAGE_DEGRADED"
-  | "KCEX_LIVE_EXECUTION_DEFERRED";
+  | "KCEX_LIVE_EXECUTION_DEFERRED"
+  | "UNRESOLVED_EXECUTION_ATTEMPT"
+  | "EXECUTION_ATTEMPT_NOT_FOUND"
+  | "CONFIRMATION_BUSY";
 
 export class AssistedExecutionError extends Error {
   constructor(readonly code: AssistedExecutionErrorCode, readonly status = 409) {

@@ -59,7 +59,7 @@ describe("TASK-008 Assisted Execution Dashboard", () => {
     expect(updated.risk).toEqual(current.risk);
   });
 
-  it("labels fixture SUBMITTED as awaiting TASK-009 confirmation", () => {
+  it("labels fixture SUBMITTED as unconfirmed, never as a position", () => {
     const auth = AuthStateSchema.parse({
       status: "AUTHENTICATED",
       authProvider: "FAKE",
@@ -76,6 +76,7 @@ describe("TASK-008 Assisted Execution Dashboard", () => {
         armedUntil: null,
         activePreview: null,
         lastSubmission: {
+          attemptId: "50000000-0000-4000-8000-000000000000",
           previewId: "50000000-0000-4000-8000-000000000001",
           provider: "FIXTURE",
           symbol: "GPS_USDT",
@@ -93,8 +94,95 @@ describe("TASK-008 Assisted Execution Dashboard", () => {
       auth,
       webSocketConnected: true,
     }));
-    expect(html).toContain("SUBMITTED — AWAITING CONFIRMATION IN TASK-009");
+    expect(html).toContain("SUBMITTED — POSITION NOT YET CONFIRMED");
     expect(html).not.toContain("Order filled");
     expect(html).not.toContain("Position open");
+  });
+
+  it("shows a blocking UNKNOWN warning with manual reconciliation only", () => {
+    const auth = AuthStateSchema.parse({
+      status: "AUTHENTICATED",
+      authProvider: "FAKE",
+      credentialsSaved: false,
+      liveTrading: false,
+      updatedAt: NOW,
+    });
+    const current = createFakeDashboardSnapshot(true, NOW);
+    const snapshot = DashboardSnapshotSchema.parse({
+      ...current,
+      execution: AssistedExecutionStateSchema.parse({
+        status: "UNKNOWN",
+        provider: "FIXTURE",
+        armedUntil: null,
+        activePreview: null,
+        lastSubmission: {
+          attemptId: "50000000-0000-4000-8000-000000000010",
+          previewId: "50000000-0000-4000-8000-000000000011",
+          provider: "FIXTURE",
+          symbol: "GPS_USDT",
+          side: "LONG",
+          status: "UNKNOWN",
+          fixtureSubmissionId: null,
+          submittedAt: null,
+          unknownAt: NOW,
+          reason: "SUBMISSION_OUTCOME_UNKNOWN",
+          evidence: null,
+        },
+        reasons: ["SUBMISSION_OUTCOME_UNKNOWN"],
+        updatedAt: NOW,
+      }),
+    });
+    const html = renderToStaticMarkup(React.createElement(DashboardView, { snapshot, auth, webSocketConnected: true }));
+    expect(html).toContain("OUTCOME UNKNOWN — NEW ENTRIES BLOCKED");
+    expect(html).toContain("Do not resubmit.");
+    expect(html).toContain("Reconcile Outcome");
+  });
+
+  it("shows a fixture confirmation status panel with observed evidence", () => {
+    const auth = AuthStateSchema.parse({
+      status: "AUTHENTICATED",
+      authProvider: "FAKE",
+      credentialsSaved: false,
+      liveTrading: false,
+      updatedAt: NOW,
+    });
+    const current = createFakeDashboardSnapshot(true, NOW);
+    const snapshot = DashboardSnapshotSchema.parse({
+      ...current,
+      execution: AssistedExecutionStateSchema.parse({
+        status: "CONFIRMED",
+        provider: "FIXTURE",
+        armedUntil: null,
+        activePreview: null,
+        lastSubmission: {
+          attemptId: "50000000-0000-4000-8000-000000000020",
+          previewId: "50000000-0000-4000-8000-000000000021",
+          provider: "FIXTURE",
+          symbol: "GPS_USDT",
+          side: "LONG",
+          status: "CONFIRMED",
+          fixtureSubmissionId: "50000000-0000-4000-8000-000000000022",
+          submittedAt: NOW,
+          confirmedAt: NOW,
+          evidence: {
+            kind: "MATCHED_OPEN",
+            source: "FIXTURE",
+            symbol: "GPS_USDT",
+            side: "LONG",
+            entryPrice: 0.0123,
+            size: 1.25,
+            observedAt: NOW,
+          },
+        },
+        reasons: [],
+        updatedAt: NOW,
+      }),
+    });
+    const html = renderToStaticMarkup(React.createElement(DashboardView, { snapshot, auth, webSocketConnected: true }));
+    expect(html).toContain("Confirmation Status · CONFIRMED");
+    expect(html).toContain("Observed Entry Price");
+    expect(html).toContain("0.0123");
+    expect(html).toContain("Observed Size");
+    expect(html).toContain("NO KCEX POSITION CREATED");
   });
 });

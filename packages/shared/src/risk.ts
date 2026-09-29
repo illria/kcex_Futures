@@ -95,6 +95,7 @@ export type RiskState = z.infer<typeof RiskStateSchema>;
 
 export const RiskExecutionFailureInputSchema = z.object({
   failureKind: z.enum(["EXECUTION_FAILED", "TIMEOUT", "UNKNOWN_RESULT", "STORAGE_ERROR"]).optional(),
+  executionAttemptId: z.string().uuid().optional(),
 }).strict();
 export type RiskExecutionFailureInput = z.infer<typeof RiskExecutionFailureInputSchema>;
 

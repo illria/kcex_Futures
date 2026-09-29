@@ -405,17 +405,28 @@ function AssistedExecutionPanel({
   const [leverage, setLeverage] = useState("10");
   const [preview, setPreview] = useState<AssistedLivePreview | null>(null);
   const [confirmationToken, setConfirmationToken] = useState("");
-  const [busyAction, setBusyAction] = useState<"ARM" | "DISARM" | "PREVIEW" | "CONFIRM" | null>(null);
+  const [busyAction, setBusyAction] = useState<"ARM" | "DISARM" | "PREVIEW" | "CONFIRM" | "RECONCILE" | null>(null);
   const [message, setMessage] = useState("");
   const [now, setNow] = useState(() => Date.now());
   const fixtureOnly = execution.provider === "FIXTURE";
   const activePreview = execution.activePreview;
   const previewExpired = activePreview !== null && Date.parse(activePreview.expiresAt) <= now;
   const lastSubmissionAt = execution.lastSubmission
-    ? execution.lastSubmission.status === "SUBMITTED"
-      ? execution.lastSubmission.submittedAt
-      : execution.lastSubmission.failedAt
+    ? execution.lastSubmission.status === "FAILED"
+      ? execution.lastSubmission.failedAt
+      : execution.lastSubmission.status === "UNKNOWN"
+        ? execution.lastSubmission.unknownAt
+        : execution.lastSubmission.status === "CONFIRMED"
+          ? execution.lastSubmission.confirmedAt
+        : execution.lastSubmission.status === "SUBMITTING"
+          ? null
+          : execution.lastSubmission.submittedAt
     : null;
+  const submission = execution.lastSubmission;
+  const submissionEvidence = submission && "evidence" in submission ? submission.evidence : null;
+  const submissionStartedAt = submission && "submittedAt" in submission ? submission.submittedAt : null;
+  const unknownReason = submission?.status === "UNKNOWN" ? submission.reason : "—";
+  const unresolved = ["SUBMITTING", "SUBMITTED", "CONFIRMING", "UNKNOWN"].includes(execution.status);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
@@ -423,7 +434,7 @@ function AssistedExecutionPanel({
   }, []);
 
   useEffect(() => {
-    const executionFinished = ["DISARMED", "PRECHECK", "SUBMITTING", "SUBMITTED", "FAILED", "BLOCKED", "HALTED"]
+    const executionFinished = ["DISARMED", "PRECHECK", "SUBMITTING", "SUBMITTED", "CONFIRMING", "CONFIRMED", "UNKNOWN", "FAILED", "BLOCKED", "HALTED"]
       .includes(execution.status);
     if (executionFinished) {
       setPreview(null);
@@ -512,6 +523,20 @@ function AssistedExecutionPanel({
     }
   }
 
+  async function reconcileUnknown() {
+    const attemptId = execution.lastSubmission?.status === "UNKNOWN" ? execution.lastSubmission.attemptId : null;
+    if (!attemptId) return;
+    setBusyAction("RECONCILE");
+    setMessage("");
+    try {
+      await postState("/api/v1/live/reconcile", { attemptId });
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Position evidence could not be reconciled.");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
   const canCreatePreview = fixtureOnly
     && (execution.status === "ARMED" || execution.status === "AWAITING_CONFIRMATION")
     && busyAction === null;
@@ -545,6 +570,20 @@ function AssistedExecutionPanel({
         <Metric label="Preview Expiry" value={activePreview ? new Date(activePreview.expiresAt).toLocaleTimeString() : "—"} />
         <Metric label="Risk Status" value={risk.status} />
       </div>
+      {submission ? (
+        <div className="execution-confirmation" aria-label="Confirmation Status">
+          <p className="eyebrow">Confirmation Status · {submission.status}</p>
+          <div className="metric-grid four">
+            <Metric label="Attempt ID" value={submission.attemptId} />
+            <Metric label="Submitted At" value={submissionStartedAt ?? "—"} />
+            <Metric label="Observed Side" value={submissionEvidence?.kind === "MATCHED_OPEN" ? submissionEvidence.side : "—"} />
+            <Metric label="Observed Entry Price" value={submissionEvidence?.kind === "MATCHED_OPEN" ? String(submissionEvidence.entryPrice) : "—"} />
+            <Metric label="Observed Size" value={submissionEvidence?.kind === "MATCHED_OPEN" ? String(submissionEvidence.size) : "—"} />
+            <Metric label="Evidence Time" value={submissionEvidence?.observedAt ?? "—"} />
+            <Metric label="Unknown Reason" value={unknownReason} />
+          </div>
+        </div>
+      ) : null}
       {activePreview ? (
         <div className="execution-preview" aria-label="Immutable preview">
           <strong>Preview {activePreview.previewId}</strong>
@@ -554,10 +593,37 @@ function AssistedExecutionPanel({
           <p>Expires {new Date(activePreview.expiresAt).toLocaleString()}{previewExpired ? " · EXPIRED; create a new preview" : ""}</p>
         </div>
       ) : null}
+      {execution.lastSubmission?.status === "CONFIRMED" && execution.lastSubmission.evidence.kind === "MATCHED_OPEN" ? (
+        <p className="muted-note" role="status">
+          Fixture evidence: {execution.lastSubmission.evidence.symbol} {execution.lastSubmission.evidence.side} ·
+          entry {execution.lastSubmission.evidence.entryPrice} · size {execution.lastSubmission.evidence.size} ·
+          observed {execution.lastSubmission.evidence.observedAt}
+        </p>
+      ) : null}
+      {execution.lastSubmission?.status === "UNKNOWN" && execution.lastSubmission.evidence ? (
+        <p className="muted-note" role="status">
+          Last evidence: {execution.lastSubmission.evidence.kind} · observed {execution.lastSubmission.evidence.observedAt}
+        </p>
+      ) : null}
       {execution.status === "SUBMITTED" ? (
-        <p className="execution-outcome" role="status">SUBMITTED — AWAITING CONFIRMATION IN TASK-009. No position or fill is inferred.</p>
+        <p className="execution-outcome" role="status">SUBMITTED — POSITION NOT YET CONFIRMED. Submission acceptance is not position confirmation.</p>
+      ) : execution.status === "CONFIRMING" ? (
+        <p className="execution-outcome" role="status">CONFIRMING FIXTURE POSITION EVIDENCE. No KCEX position is created.</p>
+      ) : execution.status === "CONFIRMED" ? (
+        <p className="execution-outcome" role="status">FIXTURE POSITION CONFIRMED — NO KCEX POSITION CREATED.</p>
+      ) : execution.status === "UNKNOWN" ? (
+        <div className="execution-unknown" role="alert">
+          <strong>OUTCOME UNKNOWN — NEW ENTRIES BLOCKED</strong>
+          <span>Do not resubmit. Reconciliation only reads fixture evidence and never submits again.</span>
+          {execution.lastSubmission?.status === "UNKNOWN" ? (
+            <span>Attempt {execution.lastSubmission.attemptId} · {execution.lastSubmission.reason}</span>
+          ) : null}
+          <button type="button" onClick={() => void reconcileUnknown()} disabled={busyAction !== null}>
+            {busyAction === "RECONCILE" ? "Checking evidence…" : "Reconcile Outcome"}
+          </button>
+        </div>
       ) : execution.status === "FAILED" ? (
-        <p className="execution-outcome" role="status">Fixture adapter failed. No automatic retry was attempted.</p>
+        <p className="execution-outcome" role="status">FAILED — FIXTURE PROVIDER CONFIRMED NOT_SUBMITTED. No automatic retry was attempted.</p>
       ) : null}
 
       <div className="execution-controls">
@@ -570,7 +636,7 @@ function AssistedExecutionPanel({
           disabled={!fixtureOnly || busyAction !== null}
           placeholder="ARM ASSISTED LIVE EXECUTION"
         />
-        <button type="button" onClick={() => void arm()} disabled={!fixtureOnly || busyAction !== null || acknowledgement !== "ARM ASSISTED LIVE EXECUTION"}>
+        <button type="button" onClick={() => void arm()} disabled={!fixtureOnly || unresolved || busyAction !== null || acknowledgement !== "ARM ASSISTED LIVE EXECUTION"}>
           {busyAction === "ARM" ? "Arming…" : "Arm for five minutes"}
         </button>
         <button type="button" className="secondary" onClick={() => void disarm()} disabled={busyAction === "DISARM"}>
@@ -594,9 +660,9 @@ function AssistedExecutionPanel({
           {busyAction === "CONFIRM" ? "Submitting once…" : "Confirm Single Submission"}
         </button>
       </div>
-      <p className="muted-note">Runtime arm is local intent only, not platform authorization. Market / isolated / margin / leverage expectations have not been verified against KCEX. No automatic retry, position confirmation, scheduler, or TP/SL is implemented.</p>
+      <p className="muted-note">Runtime arm is local intent only, not platform authorization. Position confirmation uses fixture evidence only. No automatic retry, scheduler, or TP/SL is implemented.</p>
       {execution.lastSubmission ? (
-        <p className="muted-note" role="status">Last fixture attempt: {execution.lastSubmission.status} · {execution.lastSubmission.side} · {lastSubmissionAt}</p>
+        <p className="muted-note" role="status">Last fixture attempt: {execution.lastSubmission.status} · {execution.lastSubmission.side} · {lastSubmissionAt ?? "—"} · {execution.lastSubmission.attemptId}</p>
       ) : null}
       {message ? <p className="execution-message" role="status">{message}</p> : null}
     </section>

@@ -387,7 +387,8 @@ The execution provider defaults to `DISABLED`; GitHub Actions selects
 `FIXTURE`. A confirmation consumes the arm and preview before precheck, so
 blocked and failed attempts cannot be replayed. `SUBMITTED` means only that the
 fixture adapter accepted one submission action. It never means fill or open
-position. TASK-009 owns position/fill confirmation and UNKNOWN reconciliation.
+position. TASK-009 adds bounded fixture-only position evidence and the durable
+UNKNOWN reconciliation state; it does not add a real KCEX confirmation source.
 
 Arm state, active preview, and confirmation token exist only in process memory
 and are never persisted to SQLite, JSON files, or Vault; restart always starts
@@ -405,7 +406,25 @@ Runtime arm is local intent and does not grant KCEX automation permission.
 The UI presents explicit LONG/SHORT selection and separate Arm, Preview, and
 Confirm actions. It displays the fixed MARKET/ISOLATED intent and clearly labels
 reference price as not a guaranteed fill price. There is no scheduler, random
-direction, automatic retry, position inference, TP, or SL in TASK-008.
+direction, TP, or SL in TASK-008.
+
+### Position Confirmation and UNKNOWN (TASK-009)
+
+Implementation status: REVIEW READY in PR #10; not merged.
+
+TASK-009 appends SQLite schema v2 for durable attempts. `SUBMITTING` and its
+audit event commit atomically before the fixture adapter call. The execution
+state then moves through `SUBMITTED` and `CONFIRMING`; only fresh fixture
+evidence matching GPS_USDT, intended side, positive entry price, and positive
+size can produce fixture `CONFIRMED`. This is not an exchange position.
+
+Timeout, adapter throw, malformed response, or insufficient confirmation
+evidence becomes durable `UNKNOWN`. One unresolved attempt blocks all new
+arming, preview, confirmation, and adapter calls. Restart converts interrupted
+SUBMITTING/SUBMITTED/CONFIRMING attempts to UNKNOWN. Manual reconciliation only
+reads bounded fixture evidence and never resubmits. Risk outcome accounting is
+keyed by attempt ID so UNKNOWN is counted once. No LIVE trade row is created;
+real KCEX confirmation and mutation remain deferred.
 
 ### 6. Restart behavior
 
