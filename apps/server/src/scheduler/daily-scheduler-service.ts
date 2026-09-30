@@ -226,7 +226,9 @@ export class DailySchedulerService {
     if (position === "OPEN") blockers.push("POSITION_NOT_FLAT");
     else if (position !== "FLAT") blockers.push("POSITION_UNKNOWN");
     if (this.options.storage.executionAttempts.getBlockingAttempt()) blockers.push("EXECUTION_UNRESOLVED");
+    if (this.options.storage.liveExecutionAttempts.getBlockingAttempt()) blockers.push("EXECUTION_UNRESOLVED");
     if (this.options.storage.protectionPlans.getPositionGuardPlan()) blockers.push("PROTECTION_UNRESOLVED");
+    if (this.options.storage.liveProtectionPlans.getPositionGuardPlan()) blockers.push("PROTECTION_UNRESOLVED");
     const killSwitch = await this.options.getKillSwitchStatus();
     if (killSwitch === "ENGAGED") blockers.push("KILL_SWITCH_ENGAGED");
     else if (killSwitch === "UNKNOWN") blockers.push("KILL_SWITCH_UNKNOWN");

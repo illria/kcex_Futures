@@ -4,6 +4,8 @@ dist/
 !.env.example
 data/*
 !data/.gitkeep
+data/kcex-verification-report.json
+data/kcex-verification-report.json.tmp
 logs/*
 !logs/.gitkeep
 screenshots/*

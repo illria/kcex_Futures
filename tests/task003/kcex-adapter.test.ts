@@ -1,17 +1,19 @@
-import type { Locator, Page } from "playwright";
+import type { BrowserContext, Locator, Page } from "playwright";
 import { describe, expect, it } from "vitest";
 import { KcexAuthAdapter } from "../../apps/server/src/auth/kcex-auth-adapter.js";
 import { KCEX_SELECTORS } from "../../src/kcex/selectors.js";
 
-type Marker = "accountInput" | "passwordInput" | "loginSubmit" | "otpInput" | "otpSubmit" | "accountMenu" | "captcha" | "loginError" | "loginForm" | "loginControl";
+type Marker = "accountInput" | "passwordInput" | "loginSubmit" | "otpInput" | "otpSubmit" | "accountMenu" | "captcha" | "loginError" | "loginForm" | "loginControl" | "googleOAuthStart";
 
 interface FixtureState {
   url: string;
   bodyText: string;
+  bodyReads: number;
   visible: Set<Marker>;
   filled: { account: boolean; password: boolean; otp: boolean };
   onLoginSubmit?: () => void;
   onOtpSubmit?: () => void;
+  onGoogleClick?: () => void;
 }
 
 function pageFixture(options: {
@@ -21,14 +23,18 @@ function pageFixture(options: {
   visible?: Marker[];
   onLoginSubmit?: () => void;
   onOtpSubmit?: () => void;
+  onGoogleClick?: () => void;
+  googleOAuthSelector?: string;
 } = {}): { page: Page; state: FixtureState } {
   const state: FixtureState = {
     url: options.url ?? "https://www.kcex.com/login",
     bodyText: options.bodyText ?? "",
+    bodyReads: 0,
     visible: new Set(options.visible ?? []),
     filled: { account: false, password: false, otp: false },
     onLoginSubmit: options.onLoginSubmit,
     onOtpSubmit: options.onOtpSubmit,
+    onGoogleClick: options.onGoogleClick,
   };
 
   const markerForSelector = (selector: string): Marker | "body" | null => {
@@ -43,6 +49,7 @@ function pageFixture(options: {
     if (selector === KCEX_SELECTORS.loginError) return "loginError";
     if (selector === KCEX_SELECTORS.loginForm) return "loginForm";
     if (selector === KCEX_SELECTORS.loginControl) return "loginControl";
+    if (selector === options.googleOAuthSelector && options.googleOAuthSelector) return "googleOAuthStart";
     return null;
   };
 
@@ -53,8 +60,14 @@ function pageFixture(options: {
       count: async () => visible ? 1 : 0,
       nth: () => stub,
       isVisible: async () => visible,
-      innerText: async () => marker === "body" ? state.bodyText : "",
-      textContent: async () => marker === "body" ? state.bodyText : "",
+      innerText: async () => {
+        if (marker === "body") state.bodyReads += 1;
+        return marker === "body" ? state.bodyText : "";
+      },
+      textContent: async () => {
+        if (marker === "body") state.bodyReads += 1;
+        return marker === "body" ? state.bodyText : "";
+      },
       fill: async () => {
         if (marker === "accountInput") state.filled.account = true;
         if (marker === "passwordInput") state.filled.password = true;
@@ -63,6 +76,7 @@ function pageFixture(options: {
       click: async () => {
         if (marker === "loginSubmit") state.onLoginSubmit?.();
         if (marker === "otpSubmit") state.onOtpSubmit?.();
+        if (marker === "googleOAuthStart") state.onGoogleClick?.();
       },
     } as unknown as Locator;
     return stub;
@@ -76,6 +90,7 @@ function pageFixture(options: {
       return null;
     },
     waitForLoadState: async () => undefined,
+    waitForEvent: async () => null,
     locator,
   } as unknown as Page;
   return { page, state };
@@ -182,5 +197,47 @@ describe("KcexAuthAdapter result handling", () => {
   it("rejects an untrusted KCEX base URL before a page can be opened", () => {
     expect(() => new KcexAuthAdapter({ baseUrl: "https://evil.example.invalid" })).toThrow();
     expect(() => new KcexAuthAdapter({ baseUrl: "https://www.kcex.com/futures" })).toThrow();
+  });
+
+  it("keeps Google OAuth user-driven until a trusted KCEX account marker returns", async () => {
+    const fixture = pageFixture({
+      bodyText: "Google Password and verification challenge",
+      visible: ["googleOAuthStart"],
+      googleOAuthSelector: "#google-oauth-start",
+    });
+    fixture.state.onGoogleClick = () => { fixture.state.url = "https://accounts.google.com/signin"; };
+    const adapter = new KcexAuthAdapter({ page: fixture.page, googleOAuthSelector: "#google-oauth-start" });
+    await expect(adapter.startGoogleOAuth()).resolves.toBe("GOOGLE_OAUTH_PENDING");
+    await expect(adapter.checkSession()).resolves.toBe("GOOGLE_OAUTH_PENDING");
+    expect(fixture.state.filled).toEqual({ account: false, password: false, otp: false });
+    expect(fixture.state.bodyReads).toBe(0);
+
+    fixture.state.url = "https://www.kcex.com/futures/usdt/GPS_USDT";
+    fixture.state.bodyText = "Account menu";
+    fixture.state.visible = new Set(["accountMenu"]);
+    await expect(adapter.checkSession()).resolves.toBe("AUTHENTICATED");
+    expect(fixture.state.filled).toEqual({ account: false, password: false, otp: false });
+  });
+
+  it("exports only exact KCEX-origin browser state after OAuth", async () => {
+    const context = {
+      storageState: async () => ({
+        cookies: [
+          { name: "KCEX_SESSION", value: "fixture-kcex-session", domain: ".www.kcex.com", path: "/", expires: -1, httpOnly: true, secure: true, sameSite: "Lax" },
+          { name: "SID", value: "fixture-google-session", domain: ".accounts.google.com", path: "/", expires: -1, httpOnly: true, secure: true, sameSite: "Lax" },
+        ],
+        origins: [
+          { origin: "https://www.kcex.com", localStorage: [{ name: "kcex-state", value: "fixture-kcex-local-state" }] },
+          { origin: "https://accounts.google.com", localStorage: [{ name: "google-state", value: "fixture-google-local-state" }] },
+        ],
+      }),
+    } as unknown as BrowserContext;
+    const adapter = new KcexAuthAdapter({ context });
+    const exported = await adapter.exportSession();
+    expect(exported).toMatchObject({
+      cookies: [{ name: "KCEX_SESSION", value: "fixture-kcex-session", domain: ".www.kcex.com" }],
+      origins: [{ origin: "https://www.kcex.com" }],
+    });
+    expect(JSON.stringify(exported)).not.toContain("google");
   });
 });

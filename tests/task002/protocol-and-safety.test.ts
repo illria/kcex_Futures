@@ -141,9 +141,9 @@ describe("local dashboard safety defaults", () => {
     expect(() => getDashboardPort({ DASHBOARD_PORT: "70000" })).toThrow();
   });
 
-  it("keeps LIVE_TRADING false even when the environment asks to enable it", () => {
-    const config = loadConfig({ LIVE_TRADING: "true" }, () => undefined);
-    expect(config.LIVE_TRADING).toBe(false);
+  it("keeps LIVE_TRADING off by default and rejects enable requests without all startup gates", () => {
+    expect(loadConfig({}).LIVE_TRADING).toBe(false);
+    expect(() => loadConfig({ LIVE_TRADING: "true" }, () => undefined)).toThrow();
     expect(createFakeDashboardSnapshot().liveTrading).toBe(false);
   });
 });

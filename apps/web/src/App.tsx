@@ -24,6 +24,19 @@ import {
 } from "../../../packages/shared/src/execution.js";
 import type { PaperTradingState } from "../../../packages/shared/src/paper-trading.js";
 import {
+  LIVE_AUTOMATION_CONFIRMATION_PHRASE,
+  LIVE_CANARY_CONFIRMATION_PHRASE,
+  KcexVerificationReportSchema,
+  LiveAutomationStateSchema,
+  LiveCanaryStateSchema,
+  EMPTY_KCEX_VERIFICATION_REPORT,
+  createLiveCanaryPlaceholder,
+  createLiveAutomationPlaceholder,
+  type LiveAutomationState,
+  type LiveCanaryState,
+  type KcexVerificationReport,
+} from "../../../packages/shared/src/live-launch.js";
+import {
   ProtectionConfirmationInputSchema,
   ProtectionPreviewResponseSchema,
   ProtectionRuntimeStateSchema,
@@ -172,6 +185,12 @@ export function DashboardView({
   onExecutionStateChange,
   protection,
   onProtectionStateChange,
+  liveAutomation: liveAutomationInput,
+  onLiveAutomationStateChange,
+  liveCanary,
+  onLiveCanaryStateChange,
+  verificationReport,
+  onVerificationReportChange,
 }: {
   snapshot: DashboardSnapshot;
   auth: AuthState;
@@ -181,6 +200,12 @@ export function DashboardView({
   onExecutionStateChange?: (state: AssistedExecutionState) => void;
   protection?: ProtectionRuntimeState;
   onProtectionStateChange?: (state: ProtectionRuntimeState) => void;
+  liveAutomation?: LiveAutomationState;
+  onLiveAutomationStateChange?: (state: LiveAutomationState) => void;
+  liveCanary?: LiveCanaryState;
+  onLiveCanaryStateChange?: (state: LiveCanaryState) => void;
+  verificationReport?: KcexVerificationReport;
+  onVerificationReportChange?: (report: KcexVerificationReport) => void;
 }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -194,6 +219,7 @@ export function DashboardView({
     now,
     resilience?.readStaleAfterMs ?? 15_000,
   );
+  const liveAutomation = liveAutomationInput ?? createLiveAutomationPlaceholder();
   const sourceLabel = futures.source === "KCEX" ? "LIVE READ-ONLY" : "FIXTURE";
   const formatNumber = (value: number | null, digits = 5): string => value === null ? "—" : value.toFixed(digits);
   const formatSigned = (value: number | null): string => value === null ? "—" : `${value.toFixed(2)} USDT`;
@@ -234,7 +260,7 @@ export function DashboardView({
         <p className="muted-note">
           Block reasons: {snapshot.risk.reasons.length ? snapshot.risk.reasons.join(", ") : "None"}
         </p>
-        <p className="safety-note">LIVE_TRADING=false · Risk state is read only.</p>
+        <p className="safety-note">Risk state is read only. Live automation has a separate runtime gate.</p>
       </section>
 
       <div className="stream-state" role="status">
@@ -252,10 +278,27 @@ export function DashboardView({
         onExecutionStateChange={onExecutionStateChange}
       />
 
-      <ProtectionPanel
+        <ProtectionPanel
         protection={protection ?? createEmptyProtectionState()}
         execution={snapshot.execution}
         onProtectionStateChange={onProtectionStateChange}
+      />
+
+      <LiveAutomationPanel
+        state={liveAutomation}
+        snapshot={snapshot}
+        onStateChange={onLiveAutomationStateChange}
+      />
+      <LiveCanaryPanel
+        automation={liveAutomation}
+        state={liveCanary ?? createLiveCanaryPlaceholder()}
+        onStateChange={onLiveCanaryStateChange}
+      />
+      <KcexVerificationPanel
+        auth={auth}
+        liveTrading={liveAutomation.liveTrading}
+        report={verificationReport ?? EMPTY_KCEX_VERIFICATION_REPORT}
+        onReportChange={onVerificationReportChange}
       />
 
       <section className="panel market-panel">
@@ -372,7 +415,7 @@ export function DashboardView({
           <Metric label="Grace Window" value={`${snapshot.scheduler.graceMinutes} minutes`} />
         </div>
         <p className="safety-note">SCHEDULE ONLY — NO AUTOMATIC ORDER SUBMISSION</p>
-        <p className="muted-note">LIVE_TRADING=false · Entry eligibility is informational; any later assisted action remains separate and requires its existing manual authorization flow.</p>
+        <p className="muted-note">Entry eligibility is informational; the live scheduler path requires a separate runtime arm.</p>
         {snapshot.scheduler.blockReasons.length > 0 ? (
           <p className="muted-note" role="status">Block reasons: {snapshot.scheduler.blockReasons.join(", ")}</p>
         ) : null}
@@ -437,7 +480,9 @@ export function DashboardView({
         </ul>
       </section>
 
-      <p className="safety-note">Authentication is separate from execution · LIVE_TRADING=false · Real KCEX execution is disabled.</p>
+      <p className="safety-note">
+        Authentication is separate from execution · LIVE_TRADING={String(liveAutomation.liveTrading)} · Live session arm is runtime-only.
+      </p>
     </main>
   );
 }
@@ -452,6 +497,337 @@ function createEmptyProtectionState(): ProtectionRuntimeState {
     reasons: [],
     updatedAt: new Date().toISOString(),
   });
+}
+
+function LiveAutomationPanel({
+  state,
+  snapshot,
+  onStateChange,
+}: {
+  state: LiveAutomationState;
+  snapshot: DashboardSnapshot;
+  onStateChange?: (state: LiveAutomationState) => void;
+}) {
+  const [tpBasis, setTpBasis] = useState<ProtectionBasis | "">(state.takeProfit?.basis ?? "");
+  const [tpValue, setTpValue] = useState(state.takeProfit ? String(state.takeProfit.value) : "");
+  const [slBasis, setSlBasis] = useState<ProtectionBasis | "">(state.stopLoss?.basis ?? "");
+  const [slValue, setSlValue] = useState(state.stopLoss ? String(state.stopLoss.value) : "");
+  const [confirmation, setConfirmation] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function post(path: string, body: unknown): Promise<void> {
+    if (busy) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      const value = await requestJson<unknown>(path, { method: "POST", body: JSON.stringify(body) });
+      onStateChange?.(LiveAutomationStateSchema.parse(value));
+    } catch (error) {
+      const stateFromError = (error as ApiError & { state?: unknown }).state;
+      if (stateFromError) onStateChange?.(LiveAutomationStateSchema.parse(stateFromError));
+      setMessage(error instanceof Error ? error.message : "Live automation request failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const hasProtectionConfig = tpBasis !== "" && slBasis !== ""
+    && Number.isFinite(Number(tpValue)) && Number(tpValue) > 0
+    && Number.isFinite(Number(slValue)) && Number(slValue) > 0;
+  const canStop = state.status !== "DISARMED";
+  const activeStates = ["ARMED", "WAITING", "DUE", "PRECHECK", "SUBMITTING", "CONFIRMING", "PROTECTING", "POSITION_OPEN"];
+
+  return (
+    <section className="panel live-automation-panel" aria-label="Live Automation">
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">TASK-013 · KCEX LIVE AUTOMATION</p>
+          <h2>Live Automation</h2>
+        </div>
+        <span className="source-tag">{state.status}</span>
+      </div>
+      {state.liveTrading && activeStates.includes(state.status) ? (
+        <div className="execution-warning" role="alert">
+          <strong>REAL KCEX ORDERS ENABLED</strong>
+          <span>Stop Live Automation disables future entries; it does not close the current position.</span>
+        </div>
+      ) : (
+        <div className="execution-warning" role="note">
+          <strong>LIVE AUTOMATION DISARMED</strong>
+          <span>Every process restart begins disarmed. No live order can be resumed automatically.</span>
+        </div>
+      )}
+      <div className="metric-grid four">
+        <Metric label="KCEX Auth" value={state.authStatus} />
+        <Metric label="Resilience" value={state.resilienceStatus} />
+        <Metric label="Verified Contract Profile" value={state.contractProfileStatus} />
+        <Metric label="Current Scheduler Slot" value={snapshot.scheduler.dueSlot ? `${snapshot.scheduler.dueSlot.side} · ${snapshot.scheduler.dueSlot.dueAt}` : "—"} />
+        <Metric label="Margin" value="50 USDT" />
+        <Metric label="Leverage" value="10x" />
+        <Metric label="Margin Mode" value="ISOLATED" />
+        <Metric label="Current Position" value={`${snapshot.position.side} · ${snapshot.position.health}`} />
+        <Metric label="Protection" value={state.unresolvedProtection ? "UNRESOLVED" : state.protectionConfigured ? "CONFIGURED" : "NOT CONFIGURED"} />
+        <Metric label="Kill Switch" value={state.killSwitch} />
+        <Metric label="Last Live Attempt" value={state.lastAttemptId ?? "—"} />
+        <Metric label="Runtime Authorization" value={state.automationAuthorized ? "AUTHORIZED" : "NOT AUTHORIZED"} />
+      </div>
+      <div className="live-protection-settings">
+        <h3>Take Profit and Stop Loss</h3>
+        <div className="metric-grid two">
+          <label>TP Basis
+            <select value={tpBasis} onChange={(event) => setTpBasis(event.currentTarget.value as ProtectionBasis | "")}>
+              <option value="">Select basis</option>
+              <option value="PRICE_PCT">PRICE_PCT</option>
+              <option value="ROI_PCT">ROI_PCT</option>
+            </select>
+          </label>
+          <label>TP Value
+            <input type="number" min="0.01" step="any" value={tpValue} onChange={(event) => setTpValue(event.currentTarget.value)} />
+          </label>
+          <label>SL Basis
+            <select value={slBasis} onChange={(event) => setSlBasis(event.currentTarget.value as ProtectionBasis | "")}>
+              <option value="">Select basis</option>
+              <option value="PRICE_PCT">PRICE_PCT</option>
+              <option value="ROI_PCT">ROI_PCT</option>
+            </select>
+          </label>
+          <label>SL Value
+            <input type="number" min="0.01" step="any" value={slValue} onChange={(event) => setSlValue(event.currentTarget.value)} />
+          </label>
+        </div>
+        <button type="button" className="secondary" disabled={busy || !hasProtectionConfig || state.status !== "DISARMED"}
+          onClick={() => void post("/api/v1/live-automation/configure", {
+            takeProfit: { basis: tpBasis, value: Number(tpValue) },
+            stopLoss: { basis: slBasis, value: Number(slValue) },
+          })}>
+          Save TP/SL Settings
+        </button>
+      </div>
+      <p className="muted-note">Start requirements: {state.blockReasons.length ? state.blockReasons.join(", ") : "All gates passed"}</p>
+      <form onSubmit={(event) => { event.preventDefault(); void post("/api/v1/live-automation/arm", { confirmation }); setConfirmation(""); }}>
+        <label htmlFor="live-auto-confirmation">Type {LIVE_AUTOMATION_CONFIRMATION_PHRASE}</label>
+        <input id="live-auto-confirmation" value={confirmation} autoComplete="off" onChange={(event) => setConfirmation(event.currentTarget.value)} />
+        <button type="submit" disabled={busy || !state.canArm || confirmation !== LIVE_AUTOMATION_CONFIRMATION_PHRASE}>
+          {busy ? "Checking gates…" : "Start Live Automation"}
+        </button>
+      </form>
+      {canStop ? (
+        <button type="button" className="secondary" disabled={busy}
+          onClick={() => void post("/api/v1/live-automation/stop", {})}>
+          Stop Live Automation
+        </button>
+      ) : null}
+      <p className="muted-note">Automatic per-trade confirmation: NO · LONG/SHORT comes from the scheduler slot. A stopped or halted session never closes a position automatically.</p>
+      {message ? <p className="form-error" role="alert">{message}</p> : null}
+    </section>
+  );
+}
+
+function KcexVerificationPanel({
+  auth,
+  liveTrading,
+  report,
+  onReportChange,
+}: {
+  auth: AuthState;
+  liveTrading: boolean;
+  report: KcexVerificationReport;
+  onReportChange?: (report: KcexVerificationReport) => void;
+}) {
+  const [draft, setDraft] = useState(() => JSON.stringify(report, null, 2));
+  const [confirmation, setConfirmation] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => setDraft(JSON.stringify(report, null, 2)), [report]);
+
+  async function save(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    setBusy(true);
+    setMessage("");
+    try {
+      const parsed = KcexVerificationReportSchema.parse(JSON.parse(draft));
+      const payload = {
+        report: parsed,
+        ...(parsed.status === "PASS" ? { confirmation } : {}),
+      };
+      const value = await requestJson<unknown>("/api/v1/kcex-verification/report", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      onReportChange?.(KcexVerificationReportSchema.parse(value));
+      setConfirmation("");
+      setMessage("Read-only verification report saved locally.");
+    } catch {
+      setMessage("The report was rejected. Check the safe schema, selector IDs, verification checks, and confirmation phrase.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const checkCount = Object.values(report.checks).filter((value) => value === "PASS").length;
+  const selectorCount = Object.values(report.selectors).filter((value) => value.status === "VERIFIED").length;
+  const canEdit = auth.authProvider === "KCEX" && auth.status === "AUTHENTICATED" && !liveTrading;
+
+  return (
+    <section className="panel live-automation-panel" aria-label="KCEX Verification Mode">
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">TASK-013 · READ ONLY · NO ORDER ACTIONS</p>
+          <h2>KCEX Verification Mode</h2>
+        </div>
+        <span className="source-tag">{report.status}</span>
+      </div>
+      <div className="metric-grid three">
+        <Metric label="Read Checks Passed" value={String(checkCount)} />
+        <Metric label="Selectors Verified" value={`${selectorCount} / ${Object.keys(report.selectors).length}`} />
+        <Metric label="Contract Profile" value={report.contractProfile.status} />
+      </div>
+      <p className="muted-note">
+        Inspect the authenticated GPS_USDT dashboard and controls manually. Save only selector IDs, control semantics, numeric contract metadata, and pass/fail status. Never paste credentials, OTP, cookies, session data, HTML, or full page text.
+      </p>
+      <p className="safety-note">This checkpoint is available only with KCEX read-only authentication while LIVE_TRADING=false. It cannot submit or edit orders.</p>
+      <details>
+        <summary>Review or save the local verification report</summary>
+        <form onSubmit={(event) => void save(event)}>
+          <label htmlFor="kcex-verification-report">Verified report JSON</label>
+          <textarea
+            id="kcex-verification-report"
+            rows={16}
+            spellCheck={false}
+            autoComplete="off"
+            value={draft}
+            onChange={(event) => setDraft(event.currentTarget.value)}
+          />
+          {(() => {
+            try {
+              return JSON.parse(draft)?.status === "PASS";
+            } catch {
+              return false;
+            }
+          })() ? (
+            <label htmlFor="verification-confirmation">Type CONFIRM KCEX READ-ONLY VERIFICATION
+              <input id="verification-confirmation" value={confirmation} autoComplete="off" onChange={(event) => setConfirmation(event.currentTarget.value)} />
+            </label>
+          ) : null}
+          <button type="submit" className="secondary" disabled={busy || !canEdit}>
+            {busy ? "Saving safe report…" : "Save Read-Only Verification"}
+          </button>
+          {!canEdit ? <p className="muted-note">Unlock and authenticate with KCEX in read-only mode to edit this report.</p> : null}
+        </form>
+      </details>
+      {message ? <p className="muted-note" role="status">{message}</p> : null}
+      <p className="muted-note">Canary: {report.canaryStatus} · Auto Live remains runtime-disarmed after restart.</p>
+    </section>
+  );
+}
+
+function LiveCanaryPanel({
+  automation,
+  state,
+  onStateChange,
+}: {
+  automation: LiveAutomationState;
+  state: LiveCanaryState;
+  onStateChange?: (state: LiveCanaryState) => void;
+}) {
+  const [side, setSide] = useState<"LONG" | "SHORT">("LONG");
+  const [margin, setMargin] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const canPreview = !busy && state.attemptId === null && automation.takeProfit !== null && automation.stopLoss !== null
+    && Number.isFinite(Number(margin)) && Number(margin) > 0 && Number(margin) <= 50;
+
+  async function preview(): Promise<void> {
+    if (!canPreview || !automation.takeProfit || !automation.stopLoss) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      const value = await requestJson<unknown>("/api/v1/live-canary/preview", {
+        method: "POST",
+        body: JSON.stringify({ side, marginUsdt: Number(margin), takeProfit: automation.takeProfit, stopLoss: automation.stopLoss }),
+      });
+      onStateChange?.(LiveCanaryStateSchema.parse(value));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Canary preview failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirm(): Promise<void> {
+    if (busy || state.status !== "PREVIEWED" || !state.previewId || confirmation !== LIVE_CANARY_CONFIRMATION_PHRASE) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      const value = await requestJson<unknown>("/api/v1/live-canary/confirm", {
+        method: "POST",
+        body: JSON.stringify({ previewId: state.previewId, confirmation }),
+      });
+      onStateChange?.(LiveCanaryStateSchema.parse(value));
+      setConfirmation("");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Canary confirmation failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="panel live-automation-panel" aria-label="Live Canary">
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">TASK-013 · ONE MANUAL CANARY</p>
+          <h2>Live Canary</h2>
+        </div>
+        <span className="source-tag">{state.status}</span>
+      </div>
+      <p className="muted-note">One explicit preview and confirmation. This flow does not use the scheduler; a persisted attempt can never be retried.</p>
+      <div className="metric-grid four">
+        <Metric label="Canary Side" value={state.side ?? "—"} />
+        <Metric label="Explicit Margin" value={state.marginUsdt === null ? "—" : `${state.marginUsdt} USDT`} />
+        <Metric label="Preview Mark Price" value={state.markPrice === null ? "—" : state.markPrice.toFixed(5)} />
+        <Metric label="Verified Quantity" value={state.quantity === null ? "—" : String(state.quantity)} />
+        <Metric label="Preview Notional" value={state.notionalUsdt === null ? "—" : `${state.notionalUsdt.toFixed(2)} USDT`} />
+        <Metric label="Attempt" value={state.attemptId ?? "—"} />
+      </div>
+      {state.attemptId === null ? (
+        <div className="live-protection-settings">
+          <div className="metric-grid two">
+            <label>Canary Side
+              <select value={side} onChange={(event) => setSide(event.currentTarget.value as "LONG" | "SHORT")}>
+                <option value="LONG">LONG</option>
+                <option value="SHORT">SHORT</option>
+              </select>
+            </label>
+            <label>Canary Margin (USDT)
+              <input type="number" min="0.01" max="50" step="any" value={margin} placeholder="Enter explicitly" onChange={(event) => setMargin(event.currentTarget.value)} />
+            </label>
+          </div>
+          <button type="button" disabled={!canPreview || state.status === "PREVIEWED"} onClick={() => void preview()}>
+            {busy ? "Checking read-only gates…" : "Preview Canary"}
+          </button>
+          {state.status === "PREVIEWED" ? (
+            <form onSubmit={(event) => { event.preventDefault(); void confirm(); }}>
+              <p className="safety-note">Preview expires at {state.previewExpiresAt ?? "—"}. Review side, explicit margin, quantity, TP, and SL before confirming.</p>
+              <label htmlFor="canary-confirmation">Type {LIVE_CANARY_CONFIRMATION_PHRASE}</label>
+              <input id="canary-confirmation" value={confirmation} autoComplete="off" onChange={(event) => setConfirmation(event.currentTarget.value)} />
+              <button type="submit" disabled={busy || confirmation !== LIVE_CANARY_CONFIRMATION_PHRASE}>
+                {busy ? "Submitting once…" : "Confirm One Canary Order"}
+              </button>
+            </form>
+          ) : null}
+        </div>
+      ) : null}
+      <p className="muted-note">Canary gates: {state.blockReasons.length ? state.blockReasons.join(", ") : "No reported blockers"}</p>
+      {state.status === "MANUAL_ACTION" || state.status === "UNKNOWN" ? (
+        <div className="execution-warning" role="alert"><strong>MANUAL ACTION REQUIRED</strong><span>No automatic retry is available for this attempt.</span></div>
+      ) : null}
+      {message ? <p className="form-error" role="alert">{message}</p> : null}
+    </section>
+  );
 }
 
 function ProtectionPanel({
@@ -979,7 +1355,7 @@ export function RuntimeResiliencePanel({
       <p className="muted-note">
         Selector drift suspected: {resilience.selectorDrift.suspected ? "YES" : "NO"} · Evidence failures: {resilience.selectorDrift.consecutiveEvidenceFailures} · Missing fields: {resilience.selectorDrift.missingFields.length ? resilience.selectorDrift.missingFields.join(", ") : "None"}
       </p>
-      <p className="safety-note">LIVE_TRADING=false · Automatic login=false · Automatic trading=false · Stale after {resilience.readStaleAfterMs}ms</p>
+      <p className="safety-note">Automatic login=false · Live entries require explicit runtime authorization · Stale after {resilience.readStaleAfterMs}ms</p>
     </section>
   );
 }
@@ -1127,6 +1503,23 @@ export function AuthPanel({
     }
   }
 
+  async function startGoogleOAuth() {
+    if (busy || auth.authProvider !== "KCEX") return;
+    setMessage("");
+    setBusy(true);
+    try {
+      const state = await requestJson<unknown>("/api/v1/auth/google/start", {
+        method: "POST",
+        body: "{}",
+      });
+      onAuthChanged(AuthStateSchema.parse(state));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Google sign-in could not be started.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function deleteSavedCredentials() {
     if (!auth.credentialsSaved || busy) return;
     if (!window.confirm("Delete the saved encrypted credentials from this device?")) return;
@@ -1178,7 +1571,7 @@ export function AuthPanel({
             <small>Minimum {MASTER_KEY_MIN_LENGTH} characters</small>
             <button type="submit" disabled={busy}>{busy ? "Unlocking…" : "Unlock"}</button>
           </form>
-          <p className="safety-note">Bound to 127.0.0.1 · LIVE_TRADING=false</p>
+          <p className="safety-note">Bound to 127.0.0.1 · Live automation starts disarmed</p>
           {message ? <p className="form-error" role="alert">{message}</p> : null}
         </section>
       </main>
@@ -1222,7 +1615,24 @@ export function AuthPanel({
           <p className="eyebrow">{auth.authProvider} authentication</p>
           <h1>{auth.status === "SESSION_CHECK" ? "Checking saved session…" : "Signing in…"}</h1>
           <p className="muted-note">Secrets remain in the local backend and are never shown in the dashboard.</p>
-          <p className="safety-note">LIVE_TRADING=false</p>
+          <p className="safety-note">Live automation remains disarmed until manually started.</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (auth.status === "GOOGLE_OAUTH_PENDING") {
+    return (
+      <main className="auth-shell">
+        <section className="auth-card">
+          <p className="eyebrow">KCEX Google OAuth · manual</p>
+          <h1>Finish sign-in in the browser</h1>
+          <p className="muted-note">Complete Google password, 2FA, or any security check yourself. The app does not read or fill Google credentials. After KCEX redirects back, use Check Again.</p>
+          <button type="button" onClick={() => void checkSession()} disabled={busy}>
+            {busy ? "Checking…" : "Check Again"}
+          </button>
+          <p className="safety-note">No automatic retry, Google credential handling, or challenge bypass.</p>
+          {message ? <p className="form-error" role="alert">{message}</p> : null}
         </section>
       </main>
     );
@@ -1255,7 +1665,7 @@ export function AuthPanel({
           <button type="button" onClick={() => void checkSession()} disabled={busy}>
             {busy ? "Checking…" : "Check Again"}
           </button>
-          <p className="safety-note">The workflow fails closed. LIVE_TRADING=false</p>
+          <p className="safety-note">The workflow fails closed. Live automation remains disarmed.</p>
           {message ? <p className="form-error" role="alert">{message}</p> : null}
         </section>
       </main>
@@ -1303,6 +1713,11 @@ export function AuthPanel({
           </label>
           <button type="submit" disabled={busy}>{busy ? "Signing in…" : "Login"}</button>
         </form>
+        {auth.authProvider === "KCEX" ? (
+          <button type="button" className="secondary" onClick={() => void startGoogleOAuth()} disabled={busy}>
+            Continue with Google
+          </button>
+        ) : null}
         {auth.credentialsSaved ? (
           <button type="button" className="secondary" onClick={() => void deleteSavedCredentials()} disabled={busy}>
             {busy ? "Deleting…" : "Delete saved credentials"}
@@ -1324,6 +1739,9 @@ export function App() {
   }));
   const [webSocketConnected, setWebSocketConnected] = useState(false);
   const [serviceReady, setServiceReady] = useState(false);
+  const [liveAutomation, setLiveAutomation] = useState<LiveAutomationState>(() => createLiveAutomationPlaceholder());
+  const [liveCanary, setLiveCanary] = useState<LiveCanaryState>(() => createLiveCanaryPlaceholder());
+  const [verificationReport, setVerificationReport] = useState<KcexVerificationReport>(() => EMPTY_KCEX_VERIFICATION_REPORT);
 
   useEffect(() => {
     let disposed = false;
@@ -1353,6 +1771,15 @@ export function App() {
     void requestJson<unknown>("/api/v1/protection/state")
       .then((value) => { if (!disposed) setProtection(ProtectionRuntimeStateSchema.parse(value)); })
       .catch(() => { /* Protection state remains the safe empty fixture placeholder. */ });
+    void requestJson<unknown>("/api/v1/live-automation/state")
+      .then((value) => { if (!disposed) setLiveAutomation(LiveAutomationStateSchema.parse(value)); })
+      .catch(() => { /* Live automation stays disarmed when its state endpoint is unavailable. */ });
+    void requestJson<unknown>("/api/v1/live-canary/state")
+      .then((value) => { if (!disposed) setLiveCanary(LiveCanaryStateSchema.parse(value)); })
+      .catch(() => { /* Canary stays unavailable until its state endpoint responds. */ });
+    void requestJson<unknown>("/api/v1/kcex-verification/report")
+      .then((value) => { if (!disposed && value) setVerificationReport(KcexVerificationReportSchema.parse(value)); })
+      .catch(() => { /* Verification stays unverified until its local report loads. */ });
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const socket = new WebSocket(`${protocol}//${window.location.host}/api/v1/events`);
@@ -1455,6 +1882,8 @@ export function App() {
         if (event.type === "execution.state") {
           setSnapshot((current) => applyExecutionStateToDashboard(current, event.payload));
         }
+        if (event.type === "live.automation.state") setLiveAutomation(event.payload);
+        if (event.type === "live.canary.state") setLiveCanary(event.payload);
         if (event.type === "protection.state") setProtection(event.payload);
         if (event.type === "protection.activated") {
           setProtection((current) => ProtectionRuntimeStateSchema.parse({
@@ -1503,7 +1932,7 @@ export function App() {
           <p className="eyebrow">127.0.0.1:6666</p>
           <h1>Local Dashboard</h1>
           <p className="muted-note">{serviceReady ? "Loading local state…" : "Waiting for the local backend. No KCEX connection is attempted."}</p>
-          <p className="safety-note">LIVE_TRADING=false</p>
+          <p className="safety-note">Live automation remains disarmed until manually started.</p>
         </section>
       </main>
     );
@@ -1532,6 +1961,12 @@ export function App() {
       onExecutionStateChange={(execution) => setSnapshot((current) => applyExecutionStateToDashboard(current, execution))}
       protection={protection}
       onProtectionStateChange={setProtection}
+      liveAutomation={liveAutomation}
+      onLiveAutomationStateChange={setLiveAutomation}
+      liveCanary={liveCanary}
+      onLiveCanaryStateChange={setLiveCanary}
+      verificationReport={verificationReport}
+      onVerificationReportChange={setVerificationReport}
     />
   );
 }

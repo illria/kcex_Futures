@@ -17,7 +17,7 @@ describe("SQLite schema migrations", () => {
     const database = new SQLiteDatabase({ fileName: ":memory:" });
     sqliteDatabases.push(database);
     expect(await database.initialize()).toBe(SCHEMA_VERSION);
-    expect(database.getSchemaVersion()).toBe(4);
+    expect(database.getSchemaVersion()).toBe(5);
 
     const connection = database.getConnection();
     expect(connection.prepare("PRAGMA foreign_keys").get()).toMatchObject({ foreign_keys: 1 });
@@ -31,9 +31,9 @@ describe("SQLite schema migrations", () => {
     const database = new DatabaseSync(":memory:");
     databases.push(database);
     const migrations = new MigrationRunner(database);
-    expect(migrations.run()).toBe(4);
-    expect(migrations.run()).toBe(4);
-    expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toMatchObject({ count: 4 });
+    expect(migrations.run()).toBe(5);
+    expect(migrations.run()).toBe(5);
+    expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toMatchObject({ count: 5 });
     expect(database.prepare("SELECT attempt_id FROM execution_attempts LIMIT 0").all()).toEqual([]);
   });
 
@@ -46,11 +46,11 @@ describe("SQLite schema migrations", () => {
       id, symbol, mode, side, status, created_at, updated_at, version
     ) VALUES (?, 'GPS_USDT', 'PAPER', 'LONG', 'OPEN', '2026-09-29T12:00:00.000Z', '2026-09-29T12:00:00.000Z', 1)`).run(tradeId);
 
-    // Re-run the supported migration list; applied v1 stays intact and v2-v4 are appended.
-    expect(new MigrationRunner(database).run()).toBe(4);
+    // Re-run the supported migration list; applied v1 stays intact and v2-v5 are appended.
+    expect(new MigrationRunner(database).run()).toBe(5);
     expect(database.prepare("SELECT id, symbol, mode, status FROM trades WHERE id = ?").get(tradeId))
       .toEqual({ id: tradeId, symbol: "GPS_USDT", mode: "PAPER", status: "OPEN" });
-    expect(database.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toMatchObject({ version: 4 });
+    expect(database.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toMatchObject({ version: 5 });
   });
 
   it("rejects a database schema newer than the supported version", () => {
@@ -77,6 +77,6 @@ describe("SQLite schema migrations", () => {
     expect(() => new MigrationRunner(database, brokenMigration).run()).toThrow();
     expect(database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'rollback_probe'").get()).toBeUndefined();
     expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()).toMatchObject({ count: 0 });
-    expect(new MigrationRunner(database).run()).toBe(4);
+    expect(new MigrationRunner(database).run()).toBe(5);
   });
 });

@@ -130,6 +130,17 @@ export class RiskService {
     return decision;
   }
 
+  /** Read-only preflight for a live arm/slot check; unlike evaluatePreTrade it does not write audit or mutate risk state. */
+  async assessPreTrade(
+    intent: RiskTradeIntent,
+    options: { liveTrading?: boolean; positionState?: RiskContext["positionState"] } = {},
+  ): Promise<RiskDecision> {
+    if (!this.initialized) await this.initialize();
+    const snapshot = await this.readContext(intent.mode, options.positionState);
+    snapshot.context.liveTrading = intent.mode === "LIVE" && options.liveTrading === true;
+    return evaluateRisk(intent, snapshot.context, this.limits, this.timestamp());
+  }
+
   async assertCanOpen(intent: RiskTradeIntent): Promise<void> {
     const decision = await this.evaluatePreTrade(intent);
     if (!decision.allowed) throw new RiskBlockedError(decision.reasons);

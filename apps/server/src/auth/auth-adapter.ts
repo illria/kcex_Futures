@@ -11,6 +11,7 @@ export type AuthAdapterResult =
   | "AUTH_FAILED"
   | "AUTH_UNKNOWN"
   | "MANUAL_CHALLENGE"
+  | "GOOGLE_OAUTH_PENDING"
   | "SESSION_LOST";
 
 /**
@@ -21,6 +22,7 @@ export interface AuthAdapter {
   readonly provider: AuthProvider;
   login(credentials: AuthCredentials): Promise<AuthAdapterResult>;
   submitOtp(candidate: Buffer): Promise<AuthAdapterResult>;
+  startGoogleOAuth?(): Promise<AuthAdapterResult>;
   checkSession(): Promise<AuthAdapterResult>;
   restoreSession?(storageState: unknown): Promise<AuthAdapterResult>;
   exportSession?(): Promise<unknown>;
