@@ -19,6 +19,7 @@ import {
   ProtectionTriggeredEventPayloadSchema,
   ProtectionUnknownEventPayloadSchema,
 } from "./protection.js";
+import { SchedulerStateSchema } from "./scheduler.js";
 
 export const MASTER_KEY_MIN_LENGTH = 12;
 
@@ -191,20 +192,6 @@ export const KcexFuturesSnapshotSchema = z
   });
 export type KcexFuturesSnapshot = z.infer<typeof KcexFuturesSnapshotSchema>;
 
-export const SchedulerPlanSchema = z
-  .object({
-    dailyMin: z.literal(1),
-    dailyMax: z.literal(10),
-    todayTarget: z.number().int().min(1).max(10),
-    completed: z.number().int().nonnegative(),
-    nextTradeAt: z.null(),
-    marginUsdt: z.literal(50),
-    leverage: z.literal(10),
-    source: z.literal("MOCK"),
-  })
-  .strict();
-export type SchedulerPlan = z.infer<typeof SchedulerPlanSchema>;
-
 export const RuntimeLogSchema = z
   .object({
     id: z.string().min(1),
@@ -236,7 +223,7 @@ export const DashboardSnapshotSchema = z
     contract: ContractSnapshotSchema,
     position: PositionSnapshotSchema,
     openOrders: OpenOrdersSnapshotSchema,
-    scheduler: SchedulerPlanSchema,
+    scheduler: SchedulerStateSchema,
     paper: PaperTradingStateSchema,
     risk: RiskStateSchema,
     execution: AssistedExecutionStateSchema,
@@ -298,7 +285,7 @@ export const DashboardEventSchema = z.discriminatedUnion("type", [
       updatedAt: timestamp,
     }).strict(),
   }).strict(),
-  z.object({ ...EventMetaSchema, type: z.literal("scheduler.plan"), payload: SchedulerPlanSchema }).strict(),
+  z.object({ ...EventMetaSchema, type: z.literal("scheduler.plan"), payload: SchedulerStateSchema }).strict(),
   z.object({ ...EventMetaSchema, type: z.literal("paper.state"), payload: PaperTradingStateSchema }).strict(),
   z.object({ ...EventMetaSchema, type: z.literal("risk.state"), payload: RiskStateSchema }).strict(),
   z.object({ ...EventMetaSchema, type: z.literal("execution.state"), payload: AssistedExecutionStateSchema }).strict(),

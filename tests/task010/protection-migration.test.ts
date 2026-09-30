@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { MigrationRunner, SCHEMA_VERSION, STORAGE_MIGRATIONS } from "../../apps/server/src/storage/migrations.js";
+import { MigrationRunner, STORAGE_MIGRATIONS } from "../../apps/server/src/storage/migrations.js";
 
 describe("TASK-010 SQLite v3 migration", () => {
   it("appends v3 to v2 and preserves trade, attempt, and audit rows", () => {
@@ -18,8 +18,7 @@ describe("TASK-010 SQLite v3 migration", () => {
       database.prepare("INSERT INTO audit_events(id,category,event_type,severity,message,created_at) VALUES('a3000000-0000-4000-8000-000000000004','SYSTEM','FIXTURE','INFO','Migration fixture',?)")
         .run(time);
 
-      expect(new MigrationRunner(database).run()).toBe(SCHEMA_VERSION);
-      expect(SCHEMA_VERSION).toBe(3);
+      expect(new MigrationRunner(database, STORAGE_MIGRATIONS.slice(0, 3)).run()).toBe(3);
       expect(database.prepare("SELECT status FROM trades WHERE id = ?").get(tradeId)).toEqual({ status: "OPEN" });
       expect(database.prepare("SELECT status FROM execution_attempts WHERE attempt_id = ?").get(attemptId)).toEqual({ status: "SUBMITTING" });
       expect(database.prepare("SELECT event_type FROM audit_events WHERE id = 'a3000000-0000-4000-8000-000000000004'").get())

@@ -13,6 +13,7 @@ import { assertFuturesSourceConsistency } from "./futures-invariants.js";
 import { createIdlePaperTradingState } from "./paper-trading.js";
 import { DEFAULT_RISK_LIMITS, RiskStateSchema } from "./risk.js";
 import { AssistedExecutionStateSchema } from "./execution.js";
+import { createFixtureSchedulerState, type SchedulerState } from "./scheduler.js";
 
 export function createExecutionStatePlaceholder(now = new Date().toISOString()) {
   return AssistedExecutionStateSchema.parse({
@@ -121,6 +122,7 @@ export function createDashboardSnapshot(
   readOnlyEnabled = false,
   browser: BrowserStatus = authenticated ? "AUTHENTICATED" : "NOT_STARTED",
   storageStatus: StorageStatus = "DEGRADED",
+  scheduler: SchedulerState = createFixtureSchedulerState(now),
 ): DashboardSnapshot {
   assertFuturesSourceConsistency(futures);
   return {
@@ -141,16 +143,7 @@ export function createDashboardSnapshot(
     contract: futures.contract,
     position: futures.position,
     openOrders: futures.openOrders,
-    scheduler: {
-      dailyMin: 1,
-      dailyMax: 10,
-      todayTarget: 3,
-      completed: 0,
-      nextTradeAt: null,
-      marginUsdt: 50,
-      leverage: 10,
-      source: "MOCK",
-    },
+    scheduler,
     paper: createIdlePaperTradingState(now),
     risk: createRiskStatePlaceholder(now),
     execution: createExecutionStatePlaceholder(now),

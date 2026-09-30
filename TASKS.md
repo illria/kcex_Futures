@@ -83,18 +83,27 @@ Spec: [docs/tasks/TASK-009.md](docs/tasks/TASK-009.md)
 
 Merged to main at `02d761dd5bd3714921b23d75972aa40884f1d0d2`; post-merge GitHub Actions passed.
 
-## In Progress
+## Completed
 
 ### TASK-010 — TP/SL Management
 
-Status: REVIEW READY
+Status: COMPLETE
 
 Spec: [docs/tasks/TASK-010.md](docs/tasks/TASK-010.md)
 
 Fixture protection only. Real KCEX protective-order mutation remains deferred.
 
-## Planned
+## In Progress
 
 ### TASK-011 — Daily Random Scheduler
+
+Status: IN PROGRESS
+
+Spec: [docs/tasks/TASK-011.md](docs/tasks/TASK-011.md)
+
+Scheduler plans and tracks UTC slots only. It does not automatically arm,
+preview, confirm, submit, or manage positions.
+
+## Planned
 
 ### TASK-012 — Long-Running Resilience and Recovery

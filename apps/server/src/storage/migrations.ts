@@ -7,7 +7,7 @@ export interface StorageMigration {
   sql: string;
 }
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export const STORAGE_MIGRATIONS: readonly StorageMigration[] = [
   {
@@ -183,6 +183,44 @@ export const STORAGE_MIGRATIONS: readonly StorageMigration[] = [
         BEGIN SELECT RAISE(ABORT, 'protection_events are append-only'); END;
       CREATE TRIGGER protection_events_no_delete BEFORE DELETE ON protection_events
         BEGIN SELECT RAISE(ABORT, 'protection_events are append-only'); END;
+    `,
+  },
+  {
+    version: 4,
+    name: "daily_random_scheduler_slots",
+    sql: `
+      CREATE TABLE scheduler_slots (
+        id TEXT PRIMARY KEY NOT NULL,
+        date_key TEXT NOT NULL REFERENCES daily_plans(date_key) ON DELETE RESTRICT,
+        slot_index INTEGER NOT NULL CHECK(slot_index BETWEEN 0 AND 9),
+        symbol TEXT NOT NULL CHECK(symbol = 'GPS_USDT'),
+        side TEXT NOT NULL CHECK(side IN ('LONG', 'SHORT')),
+        due_at TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('SCHEDULED', 'DUE', 'COMPLETED', 'MISSED')),
+        execution_attempt_id TEXT REFERENCES execution_attempts(attempt_id),
+        completed_at TEXT,
+        missed_at TEXT,
+        miss_reason TEXT CHECK(miss_reason IS NULL OR miss_reason IN (
+          'WINDOW_EXPIRED', 'DAY_ROLLOVER', 'POSITION_NOT_FLAT', 'POSITION_UNKNOWN',
+          'EXECUTION_UNRESOLVED', 'PROTECTION_UNRESOLVED', 'STORAGE_DEGRADED'
+        )),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1 CHECK(version >= 1),
+        UNIQUE(date_key, slot_index),
+        CHECK(
+          (status = 'COMPLETED' AND execution_attempt_id IS NOT NULL AND completed_at IS NOT NULL AND missed_at IS NULL AND miss_reason IS NULL)
+          OR (status = 'MISSED' AND execution_attempt_id IS NULL AND completed_at IS NULL AND missed_at IS NOT NULL AND miss_reason IS NOT NULL)
+          OR (status IN ('SCHEDULED', 'DUE') AND execution_attempt_id IS NULL AND completed_at IS NULL AND missed_at IS NULL AND miss_reason IS NULL)
+        )
+      );
+
+      CREATE UNIQUE INDEX scheduler_slots_attempt_unique_idx
+        ON scheduler_slots(execution_attempt_id)
+        WHERE execution_attempt_id IS NOT NULL;
+      CREATE INDEX scheduler_slots_date_due_idx ON scheduler_slots(date_key, due_at, slot_index);
+      CREATE INDEX scheduler_slots_status_idx ON scheduler_slots(status, due_at);
+      CREATE INDEX execution_attempts_confirmed_at_idx ON execution_attempts(status, confirmed_at, side, symbol);
     `,
   },
 ];

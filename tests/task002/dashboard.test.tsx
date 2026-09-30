@@ -43,7 +43,7 @@ describe("mock dashboard rendering", () => {
       "Leverage",
       "Current Position",
       "Unrealized PnL",
-      "Today Target",
+      "Daily Target",
       "Completed",
       "Runtime Logs",
       "LIVE_TRADING",

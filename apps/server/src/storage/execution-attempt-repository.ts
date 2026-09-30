@@ -168,6 +168,20 @@ export class ExecutionAttemptRepository {
     return row ? parseAttemptRow(row) : null;
   }
 
+  listConfirmedAttemptsInRange(startAt: string, endAt: string): ExecutionAttemptRecord[] {
+    const startMs = Date.parse(startAt);
+    const endMs = Date.parse(endAt);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || startMs > endMs) {
+      throw new RangeError("Confirmed attempt range is invalid.");
+    }
+    const rows = this.database.prepare(`
+      SELECT ${ATTEMPT_COLUMNS} FROM execution_attempts
+      WHERE status = 'CONFIRMED' AND confirmed_at >= ? AND confirmed_at <= ?
+      ORDER BY confirmed_at ASC, attempt_id ASC LIMIT 1001
+    `).all(startAt, endAt) as unknown as RawRow[];
+    return rows.map(parseAttemptRow);
+  }
+
   listRecentAttempts(limit = 50): ExecutionAttemptRecord[] {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new RangeError("List limit must be from 1 to 100.");
     const rows = this.database.prepare(`
