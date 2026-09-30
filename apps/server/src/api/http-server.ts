@@ -12,6 +12,7 @@ import {
   createRiskStatePlaceholder,
   createUnavailableFuturesSnapshot,
 } from "../../../../packages/shared/src/fake-snapshot.js";
+import { SchedulerStateSchema, createFixtureSchedulerState } from "../../../../packages/shared/src/scheduler.js";
 import {
   MASTER_KEY_MIN_LENGTH,
   DashboardSnapshotSchema,
@@ -50,6 +51,7 @@ import {
 } from "../../../../packages/shared/src/protection.js";
 import type { ProtectionService } from "../protection/protection-service.js";
 import { ProtectionServiceError } from "../protection/protection-service.js";
+import type { DailySchedulerService } from "../scheduler/daily-scheduler-service.js";
 
 const UnlockInputSchema = z.object({
   masterKey: z.string().min(MASTER_KEY_MIN_LENGTH).max(4096),
@@ -73,6 +75,7 @@ export interface DashboardServerOptions {
   risk?: RiskService;
   execution?: AssistedLiveService;
   protection?: ProtectionService;
+  scheduler?: DailySchedulerService;
 }
 
 class HttpError extends Error {
@@ -213,6 +216,7 @@ async function handleApiRequest(
   risk: RiskService | undefined,
   execution: AssistedLiveService | undefined,
   protection: ProtectionService | undefined,
+  scheduler: DailySchedulerService | undefined,
 ): Promise<boolean> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "127.0.0.1"}`);
   const method = request.method ?? "GET";
@@ -244,6 +248,12 @@ async function handleApiRequest(
 
   if (method === "GET" && url.pathname === "/api/v1/live/state") {
     sendJson(response, 200, AssistedExecutionStateSchema.parse(execution?.getState() ?? createExecutionStatePlaceholder()));
+    return true;
+  }
+
+  if (method === "GET" && url.pathname === "/api/v1/scheduler/state") {
+    const state = scheduler?.getState() ?? createFixtureSchedulerState();
+    sendJson(response, 200, SchedulerStateSchema.parse(state));
     return true;
   }
 
@@ -429,6 +439,7 @@ async function handleApiRequest(
       futuresRead?.enabled ?? false,
       futuresRead?.getBrowserStatus() ?? (state.authProvider === "KCEX" ? "NOT_STARTED" : undefined),
       storageStatus,
+      scheduler?.getState() ?? createFixtureSchedulerState(),
     );
     const riskState = risk
       ? await risk.refresh()
@@ -628,6 +639,7 @@ function initialEvents(
   risk?: RiskService,
   execution?: AssistedLiveService,
   protection?: ProtectionService,
+  scheduler?: DailySchedulerService,
 ): DashboardEvent[] {
   const now = new Date().toISOString();
   const latest = futuresRead?.getLatestSnapshot();
@@ -703,7 +715,9 @@ function initialEvents(
       }),
     },
     { version: 1, type: "paper.state", timestamp: now, payload: paperTrading?.getState() ?? createIdlePaperTradingState(now) },
-    { version: 1, type: "scheduler.plan", timestamp: now, payload: snapshot.scheduler },
+    { version: 1, type: "scheduler.plan", timestamp: now, payload: SchedulerStateSchema.parse(
+      scheduler?.getState() ?? createFixtureSchedulerState(now),
+    ) },
     { version: 1, type: "system.log", timestamp: now, payload: snapshot.logs[0] },
     {
       version: 1,
@@ -733,6 +747,7 @@ export function createDashboardServer(options: DashboardServerOptions): Server {
           options.risk,
           options.execution,
           options.protection,
+          options.scheduler,
         );
         if (!handled) await serveStatic(request, response, options.staticRoot, loopbackHost);
         if (!handled && !response.writableEnded) sendJson(response, 404, { error: "Not found." });
@@ -774,7 +789,7 @@ export function createDashboardServer(options: DashboardServerOptions): Server {
     const unsubscribe = options.events.subscribe((event) => {
       if (webSocket.readyState === WebSocket.OPEN) webSocket.send(JSON.stringify(event));
     });
-    for (const event of initialEvents(options.auth.getState(), startedAt, options.futuresRead, options.paperTrading, options.risk, options.execution, options.protection)) {
+    for (const event of initialEvents(options.auth.getState(), startedAt, options.futuresRead, options.paperTrading, options.risk, options.execution, options.protection, options.scheduler)) {
       webSocket.send(JSON.stringify(event));
     }
     webSocket.on("message", () => webSocket.close(1008, "Read-only event stream."));

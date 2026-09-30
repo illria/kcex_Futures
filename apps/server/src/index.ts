@@ -20,6 +20,7 @@ import { DisabledKcexExecutionAdapter } from "./execution/disabled-kcex-executio
 import { FixtureExecutionPositionSource, resolveInitialFixturePositionState } from "./execution/execution-position-source.js";
 import { FixtureProtectionAdapter } from "./protection/protection-adapter.js";
 import { ProtectionService } from "./protection/protection-service.js";
+import { DailySchedulerService } from "./scheduler/daily-scheduler-service.js";
 import { logger } from "../../../src/logging/logger.js";
 import { loadConfig } from "../../../src/config/schema.js";
 
@@ -52,10 +53,11 @@ async function startServer(): Promise<void> {
     vault,
     process.env.SESSION_FILE?.trim() || resolve(process.cwd(), "data/kcex-session.enc.json"),
   );
+  const killSwitch = new KillSwitchService(resolve(process.cwd(), config.KILL_SWITCH_FILE));
   const risk = new RiskService({
     storage,
     events,
-    killSwitch: new KillSwitchService(resolve(process.cwd(), config.KILL_SWITCH_FILE)),
+    killSwitch,
     limits: config.RISK_LIMITS,
   });
   await risk.initialize();
@@ -94,6 +96,14 @@ async function startServer(): Promise<void> {
     setPositionState: (state) => executionPositionSource.setPositionState(state),
   });
   await protection.recover();
+  const scheduler = new DailySchedulerService({
+    storage,
+    events,
+    positionSource: executionPositionSource,
+    getKillSwitchStatus: () => killSwitch.getStatus(),
+  });
+  await scheduler.recover();
+  scheduler.start();
   const adapter = config.AUTH_PROVIDER === "KCEX"
     ? new KcexAuthAdapter({ baseUrl: config.KCEX_BASE_URL, headless: config.BROWSER_HEADLESS })
     : new FakeAuthAdapter();
@@ -132,6 +142,7 @@ async function startServer(): Promise<void> {
     risk,
     execution,
     protection,
+    scheduler,
   });
 
   const heartbeat = setInterval(() => {
@@ -154,6 +165,7 @@ async function startServer(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     clearInterval(heartbeat);
+    scheduler.stop();
     execution.close();
     unsubscribeAuthEvents?.();
     void (async () => {

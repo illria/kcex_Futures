@@ -81,7 +81,7 @@ See [docs/tasks/TASK-009.md](docs/tasks/TASK-009.md) for the acceptance criteria
 TASK-009 was merged to main at `02d761dd5bd3714921b23d75972aa40884f1d0d2`; its
 post-merge GitHub Actions run passed.
 
-## Phase 6 — TASK-010: TP/SL Management (review ready)
+## Phase 6 — TASK-010: TP/SL Management (complete)
 
 - fixture-only protection lifecycle bound to the latest confirmed, OPEN position
 - distinguish `PRICE_PCT` from fixture leveraged `ROI_PCT` approximation
@@ -90,11 +90,13 @@ post-merge GitHub Actions run passed.
 
 See [docs/tasks/TASK-010.md](docs/tasks/TASK-010.md) for the acceptance criteria.
 
-## Phase 7 — TASK-011: Daily Scheduler (planned)
+## Phase 7 — TASK-011: Daily Random Scheduler (review ready)
 
-- create bounded daily plans with deterministic test clocks
-- enforce spacing, position checks, and daily limits
-- persist plan data with TASK-005 repositories
+- create immutable UTC daily plans with deterministic injected random sources
+- enforce a five-minute grid, at least thirty-minute spacing, and a fifteen-minute grace window
+- persist daily headers, slots, and audit records atomically in SQLite schema v4
+- track only manual fixture-confirmed entries; a due slot never submits an order
+- expose read-only scheduler state through HTTP, WebSocket, and the Dashboard
 
 ## Phase 8 — TASK-012: Long-Running Resilience (planned)
 

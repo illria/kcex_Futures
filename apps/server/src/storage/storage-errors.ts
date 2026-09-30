@@ -60,3 +60,10 @@ export class InvalidExecutionAttemptTransitionError extends Error {
     this.name = "InvalidExecutionAttemptTransitionError";
   }
 }
+
+export class SchedulerSlotConflictError extends Error {
+  constructor() {
+    super("Scheduler slot state or confirmation evidence conflicted.");
+    this.name = "SchedulerSlotConflictError";
+  }
+}

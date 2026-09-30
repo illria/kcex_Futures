@@ -159,6 +159,12 @@ TASK-008
 TASK-009
 Position Confirmation + UNKNOWN State
         ↓
+TASK-010
+Fixture TP/SL Protection Management
+        ↓
+TASK-011
+Daily Random Scheduler
+        ↓
 后续任务（尚未实现）
 ```
 
@@ -244,7 +250,13 @@ Kill Switch 只阻止新 Paper entry；已有 Paper position 仍可 mark、close
 
 当前阶段只提供 fixture protection preview、持久化生命周期、fixture activation 和显式 mark 输入的本地触发模拟。用户必须分别选择 `PRICE_PCT` 或 `ROI_PCT` 并输入 TP/SL 值；ROI 仅按 `ROI / leverage` 计算为模拟价格变化，不代表 KCEX ROI 算法，也不包含费用、资金费、滑点或合约规则。Dashboard 明确标注 `FIXTURE PROTECTION ONLY · NO KCEX TP/SL ORDER EXISTS`。
 
-真实 KCEX TP/SL、reduce-only、撤单、改单、平仓和真实成交均为 DEFERRED。没有 mark HTTP API，不会因触发而自动平仓或把仓位标记为 FLAT。TASK-011 scheduler 仍未开始。详情见 [docs/tasks/TASK-010.md](docs/tasks/TASK-010.md)。
+真实 KCEX TP/SL、reduce-only、撤单、改单、平仓和真实成交均为 DEFERRED。没有 mark HTTP API，不会因触发而自动平仓或把仓位标记为 FLAT。TASK-010 已合并，详情见 [docs/tasks/TASK-010.md](docs/tasks/TASK-010.md)。
+
+## TASK-011 Daily Random Scheduler
+
+TASK-011 生成并持久化 UTC 每日随机计划：每天 1–10 个 GPS_USDT LONG/SHORT slot，按五分钟网格分布，任意相邻 slot 至少间隔 30 分钟。到达计划时间后只显示 DUE；错过 15 分钟窗口会记录 MISSED。重启读取原计划，不重新随机化，也不补做过期 slot。
+
+Scheduler 只计划、提醒并跟踪人工确认的 fixture entry。它不会自动 Arm、Preview、Confirm、提交订单、平仓或触发 TP/SL。Dashboard 显示 `SCHEDULE ONLY — NO AUTOMATIC ORDER SUBMISSION`，且 `LIVE_TRADING=false`。真实 KCEX mutation 仍关闭。详见 [docs/tasks/TASK-011.md](docs/tasks/TASK-011.md)。
 
 ## 推荐技术栈
 

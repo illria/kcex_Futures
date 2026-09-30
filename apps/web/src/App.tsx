@@ -332,16 +332,33 @@ export function DashboardView({
         )}
       </section>
 
-      <section className="panel">
-        <p className="eyebrow">Automation · display only</p>
+      <section className="panel scheduler-panel" aria-label="Daily Random Scheduler">
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">AUTOMATION · UTC · LOCAL SCHEDULE</p>
+            <h2>Daily Random Scheduler</h2>
+          </div>
+          <span className="source-tag">{snapshot.scheduler.status}</span>
+        </div>
         <div className="metric-grid four">
-          <Metric label="Daily range" value={`${snapshot.scheduler.dailyMin}-${snapshot.scheduler.dailyMax}`} />
-          <Metric label="Today Target" value={String(snapshot.scheduler.todayTarget)} />
+          <Metric label="UTC Date" value={`${snapshot.scheduler.dateKey} · ${snapshot.scheduler.timezone}`} />
+          <Metric label="Daily Target" value={`${snapshot.scheduler.todayTarget} (${snapshot.scheduler.dailyMin}-${snapshot.scheduler.dailyMax})`} />
           <Metric label="Completed" value={String(snapshot.scheduler.completed)} />
-          <Metric label="Next Trade" value="—" />
+          <Metric label="Missed" value={String(snapshot.scheduler.missed)} />
+          <Metric label="Remaining" value={String(snapshot.scheduler.remaining)} />
+          <Metric label="Next Trade" value={snapshot.scheduler.nextTradeAt ? `${snapshot.scheduler.nextTradeAt.slice(11, 16)} UTC` : "—"} />
+          <Metric label="Due Side" value={snapshot.scheduler.dueSlot?.side ?? "—"} />
+          <Metric label="Due Time" value={snapshot.scheduler.dueSlot ? `${snapshot.scheduler.dueSlot.dueAt.slice(11, 16)}–${snapshot.scheduler.dueSlot.windowEndsAt.slice(11, 16)} UTC` : "—"} />
           <Metric label="Margin" value={`${snapshot.scheduler.marginUsdt} USDT`} />
           <Metric label="Leverage" value={`${snapshot.scheduler.leverage}x`} />
+          <Metric label="Min Spacing" value={`${snapshot.scheduler.minSpacingMinutes} minutes`} />
+          <Metric label="Grace Window" value={`${snapshot.scheduler.graceMinutes} minutes`} />
         </div>
+        <p className="safety-note">SCHEDULE ONLY — NO AUTOMATIC ORDER SUBMISSION</p>
+        <p className="muted-note">LIVE_TRADING=false · Entry eligibility is informational; any later assisted action remains separate and requires its existing manual authorization flow.</p>
+        {snapshot.scheduler.blockReasons.length > 0 ? (
+          <p className="muted-note" role="status">Block reasons: {snapshot.scheduler.blockReasons.join(", ")}</p>
+        ) : null}
       </section>
 
       <section className="panel">
@@ -863,7 +880,7 @@ function AssistedExecutionPanel({
           {busyAction === "CONFIRM" ? "Submitting once…" : "Confirm Single Submission"}
         </button>
       </div>
-      <p className="muted-note">Runtime arm is local intent only, not platform authorization. Position confirmation uses fixture evidence only. No automatic retry or scheduler is implemented; protection is a separate fixture-only simulation.</p>
+      <p className="muted-note">Runtime arm is local intent only, not platform authorization. Position confirmation uses fixture evidence only. The daily scheduler is informational and never starts execution; protection is a separate fixture-only simulation.</p>
       {execution.lastSubmission ? (
         <p className="muted-note" role="status">Last fixture attempt: {execution.lastSubmission.status} · {execution.lastSubmission.side} · {lastSubmissionAt ?? "—"} · {execution.lastSubmission.attemptId}</p>
       ) : null}
