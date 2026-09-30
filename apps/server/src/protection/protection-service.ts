@@ -174,17 +174,9 @@ export class ProtectionService {
     validateTargetDirection(preview);
     const token = this.tokenGenerator();
     if (token.length < 24 || token.length > 256 || token === preview.previewId) throw new Error("Protection token generator returned an invalid token.");
-    this.options.storage.auditEvents.appendAuditEvent(protectionAudit("PROTECTION_PREVIEW_CREATED", "A fixture protection preview was created.", {
-      id: preview.previewId,
-      executionAttemptId: preview.executionAttemptId,
-      symbol: preview.symbol,
-      side: preview.side,
-      entryPrice: preview.entryPrice,
-      positionSize: preview.positionSize,
-      leverage: preview.leverage,
-      takeProfit: preview.takeProfit,
-      stopLoss: preview.stopLoss,
-    }));
+    this.options.storage.auditEvents.appendAuditEvent(
+      protectionAudit("PROTECTION_PREVIEW_CREATED", "A fixture protection preview was created.", preview),
+    );
     this.preview = {
       preview: freezePreview(preview),
       token,
