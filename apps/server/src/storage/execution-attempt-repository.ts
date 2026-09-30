@@ -159,6 +159,15 @@ export class ExecutionAttemptRepository {
     return row ? parseAttemptRow(row) : null;
   }
 
+  getLatestConfirmedAttempt(): ExecutionAttemptRecord | null {
+    const row = this.database.prepare(`
+      SELECT ${ATTEMPT_COLUMNS} FROM execution_attempts
+      WHERE status = 'CONFIRMED'
+      ORDER BY confirmed_at DESC, attempt_id DESC LIMIT 1
+    `).get() as RawRow | undefined;
+    return row ? parseAttemptRow(row) : null;
+  }
+
   listRecentAttempts(limit = 50): ExecutionAttemptRecord[] {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new RangeError("List limit must be from 1 to 100.");
     const rows = this.database.prepare(`

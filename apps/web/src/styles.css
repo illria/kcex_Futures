@@ -20,7 +20,7 @@ body {
   background: radial-gradient(ellipse at top, #1c2a36 0%, #10151d 56%);
 }
 
-button, input { font: inherit; }
+button, input, select { font: inherit; }
 
 .auth-shell {
   display: grid;
@@ -66,6 +66,17 @@ input:not([type="checkbox"]) {
   background: #101720;
   color: #f8fbff;
 }
+select {
+  width: 100%;
+  min-height: 46px;
+  padding: 11px 13px;
+  border: 1px solid #3a4859;
+  border-radius: 10px;
+  outline: none;
+  background: #101720;
+  color: #f8fbff;
+}
+select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(110, 231, 194, .12); }
 input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(110, 231, 194, .12); }
 input::placeholder { color: #627287; }
 button {
@@ -116,6 +127,12 @@ button:disabled { cursor: wait; opacity: .65; }
 .execution-preview p { margin: 7px 0 0; color: var(--muted); font-size: .84rem; }
 .execution-outcome { margin: 16px 0 0; padding: 12px 14px; border-radius: 9px; background: rgba(110, 231, 194, .1); color: var(--accent); font-weight: 800; line-height: 1.5; }
 .execution-message { margin: 14px 0 0; color: #f6c778; font-size: .88rem; line-height: 1.5; }
+.protection-panel { border-color: #4e6041; }
+.protection-controls { display: grid; gap: 10px; margin-top: 18px; }
+.protection-controls > label { color: #d8e1ec; font-size: .88rem; font-weight: 650; }
+.protection-controls button { margin-top: 2px; }
+.protection-metrics { margin: 12px 0; }
+.protection-preview { margin-top: 16px; }
 .metric-grid { display: grid; gap: 12px; }
 .metric-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .metric-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }

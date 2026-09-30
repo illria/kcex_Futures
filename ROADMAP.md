@@ -68,7 +68,7 @@ TASK-008 was merged to main before the current TASK-009 branch. The fixture-only
 path remains the only execution implementation; live KCEX mutation stays
 disabled.
 
-## Phase 5 — TASK-009: Position Confirmation + UNKNOWN State (review ready)
+## Phase 5 — TASK-009: Position Confirmation + UNKNOWN State (complete)
 
 - durably record SUBMITTING with its audit event before adapter invocation
 - classify ambiguous adapter outcomes as UNKNOWN and block new entries
@@ -78,10 +78,17 @@ disabled.
 
 See [docs/tasks/TASK-009.md](docs/tasks/TASK-009.md) for the acceptance criteria.
 
-## Phase 6 — TASK-010: TP/SL Management (planned)
+TASK-009 was merged to main at `02d761dd5bd3714921b23d75972aa40884f1d0d2`; its
+post-merge GitHub Actions run passed.
 
-- handle protection only after a position is confirmed
-- distinguish price percentage from ROI percentage
+## Phase 6 — TASK-010: TP/SL Management (review ready)
+
+- fixture-only protection lifecycle bound to the latest confirmed, OPEN position
+- distinguish `PRICE_PCT` from fixture leveraged `ROI_PCT` approximation
+- persist plans before fixture activation and recover ambiguous outcomes as UNKNOWN
+- keep real KCEX protective-order mutations deferred
+
+See [docs/tasks/TASK-010.md](docs/tasks/TASK-010.md) for the acceptance criteria.
 
 ## Phase 7 — TASK-011: Daily Scheduler (planned)
 

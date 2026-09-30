@@ -18,6 +18,8 @@ import { AssistedLiveService } from "./execution/assisted-live-service.js";
 import { FixtureExecutionAdapter } from "./execution/fixture-execution-adapter.js";
 import { DisabledKcexExecutionAdapter } from "./execution/disabled-kcex-execution-adapter.js";
 import { FixtureExecutionPositionSource, resolveInitialFixturePositionState } from "./execution/execution-position-source.js";
+import { FixtureProtectionAdapter } from "./protection/protection-adapter.js";
+import { ProtectionService } from "./protection/protection-service.js";
 import { logger } from "../../../src/logging/logger.js";
 import { loadConfig } from "../../../src/config/schema.js";
 
@@ -83,6 +85,15 @@ async function startServer(): Promise<void> {
     onConfirmed: () => executionPositionSource.setPositionState("OPEN"),
   });
   await execution.recover();
+  const protection = new ProtectionService({
+    provider: "FIXTURE",
+    adapter: new FixtureProtectionAdapter(),
+    storage,
+    events,
+    positionSource: executionPositionSource,
+    setPositionState: (state) => executionPositionSource.setPositionState(state),
+  });
+  await protection.recover();
   const adapter = config.AUTH_PROVIDER === "KCEX"
     ? new KcexAuthAdapter({ baseUrl: config.KCEX_BASE_URL, headless: config.BROWSER_HEADLESS })
     : new FakeAuthAdapter();
@@ -120,6 +131,7 @@ async function startServer(): Promise<void> {
     paperTrading,
     risk,
     execution,
+    protection,
   });
 
   const heartbeat = setInterval(() => {

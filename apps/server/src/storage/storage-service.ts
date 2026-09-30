@@ -8,6 +8,7 @@ import {
 import { AuditRepository } from "./audit-repository.js";
 import { DailyPlanRepository } from "./daily-plan-repository.js";
 import { ExecutionAttemptRepository } from "./execution-attempt-repository.js";
+import { ProtectionPlanRepository } from "./protection-plan-repository.js";
 import { SQLiteDatabase } from "./sqlite-database.js";
 import { DatabaseSchemaTooNewError, StorageInitializationError } from "./storage-errors.js";
 import { TradeRepository } from "./trade-repository.js";
@@ -29,6 +30,7 @@ export class StorageService {
   private dailyPlansRepository: DailyPlanRepository | null = null;
   private auditEventsRepository: AuditRepository | null = null;
   private executionAttemptsRepository: ExecutionAttemptRepository | null = null;
+  private protectionPlansRepository: ProtectionPlanRepository | null = null;
 
   constructor(options: StorageServiceOptions = {}) {
     this.database = new SQLiteDatabase({ fileName: options.databaseFile });
@@ -60,6 +62,11 @@ export class StorageService {
     return this.executionAttemptsRepository!;
   }
 
+  get protectionPlans(): ProtectionPlanRepository {
+    this.assertReady();
+    return this.protectionPlansRepository!;
+  }
+
   async initialize(): Promise<void> {
     if (this.isReady) return;
     if (this.closed) throw new StorageInitializationError();
@@ -70,6 +77,7 @@ export class StorageService {
       this.dailyPlansRepository = new DailyPlanRepository(connection, this.now);
       this.auditEventsRepository = new AuditRepository(connection, this.now);
       this.executionAttemptsRepository = new ExecutionAttemptRepository(connection, this.auditEventsRepository, this.now);
+      this.protectionPlansRepository = new ProtectionPlanRepository(connection, this.auditEventsRepository, this.now);
       this.initialized = true;
       this.logger?.info({ schemaVersion }, "Trading storage ready.");
     } catch (error) {
@@ -130,6 +138,7 @@ export class StorageService {
     this.dailyPlansRepository = null;
     this.auditEventsRepository = null;
     this.executionAttemptsRepository = null;
+    this.protectionPlansRepository = null;
     this.database.close();
   }
 
@@ -151,4 +160,9 @@ const REQUIRED_STORAGE_PROBES = [
     confirmation_started_at, confirmed_at, failed_at, unknown_at, observed_side,
     observed_entry_price, observed_size, observed_at, created_at, updated_at, version
     FROM execution_attempts LIMIT 0`,
+  `SELECT id, execution_attempt_id, provider, symbol, side, entry_price, position_size, leverage,
+    tp_basis, tp_value, tp_target_price, sl_basis, sl_value, sl_target_price, status,
+    triggered_leg, fixture_protection_id, created_at, activated_at, triggered_at, updated_at, version
+    FROM protection_plans LIMIT 0`,
+  "SELECT id, protection_id, event_type, event_time, payload_json, created_at FROM protection_events LIMIT 0",
 ] as const;

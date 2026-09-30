@@ -19,7 +19,7 @@
 - 每日计划：随机 1–10 次
 - 方向：可配置为随机 LONG / SHORT
 - 同时最大持仓：1
-- 自动设置 TP / SL
+- Fixture-only TP / SL protection simulation (does not create KCEX orders)
 - **默认禁止实盘**
 
 > 重要：本项目采用浏览器自动化，而不是 KCEX 官方公开交易 API。只有在账户、地区、平台规则和 KCEX 授权允许的前提下才能启用真实交易。
@@ -236,9 +236,15 @@ Kill Switch 只阻止新 Paper entry；已有 Paper position 仍可 mark、close
 
 ## TASK-009 Position Confirmation + UNKNOWN State
 
-当前状态：REVIEW READY（PR #10，尚未合并）。SQLite schema v2 增加 durable execution attempt；adapter 调用前，SUBMITTING 与审计事件以一个事务持久化。只有明确返回 `NOT_SUBMITTED` 才记录 FAILED；超时、抛错、异常响应和确认不足均进入 UNKNOWN，阻止新 Arm、Preview、Confirm 和 adapter 调用。UNKNOWN 只能由用户触发 `/api/v1/live/reconcile` 读取 fixture evidence，不会重试提交，也没有 force-clear 接口。
+当前状态：COMPLETE，已合并到 main（`02d761dd5bd3714921b23d75972aa40884f1d0d2`）。SQLite schema v2 增加 durable execution attempt；adapter 调用前，SUBMITTING 与审计事件以一个事务持久化。只有明确返回 `NOT_SUBMITTED` 才记录 FAILED；超时、抛错、异常响应和确认不足均进入 UNKNOWN，阻止新 Arm、Preview、Confirm 和 adapter 调用。UNKNOWN 只能由用户触发 `/api/v1/live/reconcile` 读取 fixture evidence，不会重试提交，也没有 force-clear 接口。
 
-仓位确认目前只支持 bounded fixture evidence。`CONFIRMED` 表示 fixture 数据匹配 symbol、方向和正数 entry/size，不代表真实 KCEX 仓位。不存在 LIVE trade row、真实 KCEX confirmation source、真实写请求、TP/SL 或 scheduler。`LIVE_TRADING=false` 保持强制关闭。验收标准见 [docs/tasks/TASK-009.md](docs/tasks/TASK-009.md)。
+仓位确认目前只支持 bounded fixture evidence。`CONFIRMED` 表示 fixture 数据匹配 symbol、方向和正数 entry/size，不代表真实 KCEX 仓位。不存在 LIVE trade row、真实 KCEX confirmation source、真实写请求或 scheduler。`LIVE_TRADING=false` 保持强制关闭。验收标准见 [docs/tasks/TASK-009.md](docs/tasks/TASK-009.md)。
+
+## TASK-010 TP/SL Protection Management
+
+当前阶段只提供 fixture protection preview、持久化生命周期、fixture activation 和显式 mark 输入的本地触发模拟。用户必须分别选择 `PRICE_PCT` 或 `ROI_PCT` 并输入 TP/SL 值；ROI 仅按 `ROI / leverage` 计算为模拟价格变化，不代表 KCEX ROI 算法，也不包含费用、资金费、滑点或合约规则。Dashboard 明确标注 `FIXTURE PROTECTION ONLY · NO KCEX TP/SL ORDER EXISTS`。
+
+真实 KCEX TP/SL、reduce-only、撤单、改单、平仓和真实成交均为 DEFERRED。没有 mark HTTP API，不会因触发而自动平仓或把仓位标记为 FLAT。TASK-011 scheduler 仍未开始。详情见 [docs/tasks/TASK-010.md](docs/tasks/TASK-010.md)。
 
 ## 推荐技术栈
 

@@ -21,6 +21,14 @@ import {
   type AssistedLivePreview,
 } from "../../../packages/shared/src/execution.js";
 import type { PaperTradingState } from "../../../packages/shared/src/paper-trading.js";
+import {
+  ProtectionConfirmationInputSchema,
+  ProtectionPreviewResponseSchema,
+  ProtectionRuntimeStateSchema,
+  type ProtectionBasis,
+  type ProtectionPreview,
+  type ProtectionRuntimeState,
+} from "../../../packages/shared/src/protection.js";
 
 interface ApiError extends Error {
   status?: number;
@@ -157,11 +165,15 @@ export function DashboardView({
   auth,
   webSocketConnected,
   onExecutionStateChange,
+  protection,
+  onProtectionStateChange,
 }: {
   snapshot: DashboardSnapshot;
   auth: AuthState;
   webSocketConnected: boolean;
   onExecutionStateChange?: (state: AssistedExecutionState) => void;
+  protection?: ProtectionRuntimeState;
+  onProtectionStateChange?: (state: ProtectionRuntimeState) => void;
 }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -221,6 +233,12 @@ export function DashboardView({
         execution={snapshot.execution}
         risk={snapshot.risk}
         onExecutionStateChange={onExecutionStateChange}
+      />
+
+      <ProtectionPanel
+        protection={protection ?? createEmptyProtectionState()}
+        execution={snapshot.execution}
+        onProtectionStateChange={onProtectionStateChange}
       />
 
       <section className="panel market-panel">
@@ -387,6 +405,191 @@ export function DashboardView({
 
       <p className="safety-note">Authentication is separate from execution · LIVE_TRADING=false · Real KCEX execution is disabled.</p>
     </main>
+  );
+}
+
+function createEmptyProtectionState(): ProtectionRuntimeState {
+  return ProtectionRuntimeStateSchema.parse({
+    status: "NONE",
+    provider: "FIXTURE",
+    activePreview: null,
+    activePlan: null,
+    lastPlan: null,
+    reasons: [],
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+function ProtectionPanel({
+  protection,
+  execution,
+  onProtectionStateChange,
+}: {
+  protection: ProtectionRuntimeState;
+  execution: AssistedExecutionState;
+  onProtectionStateChange?: (state: ProtectionRuntimeState) => void;
+}) {
+  const [tpBasis, setTpBasis] = useState<ProtectionBasis | "">("");
+  const [tpValue, setTpValue] = useState("");
+  const [slBasis, setSlBasis] = useState<ProtectionBasis | "">("");
+  const [slValue, setSlValue] = useState("");
+  const [preview, setPreview] = useState<ProtectionPreview | null>(null);
+  const [confirmationToken, setConfirmationToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const confirmedAttempt = execution.lastSubmission?.status === "CONFIRMED" ? execution.lastSubmission : null;
+  const hasActiveProtection = protection.status === "PLANNED" || protection.status === "ACTIVE" || protection.status === "UNKNOWN"
+    || protection.status === "TRIGGERED_TP" || protection.status === "TRIGGERED_SL";
+  const canPreview = confirmedAttempt !== null && !hasActiveProtection && !busy;
+
+  function clearPreview(): void {
+    setPreview(null);
+    setConfirmationToken("");
+  }
+
+  async function createPreview(): Promise<void> {
+    if (!confirmedAttempt || !tpBasis || !slBasis || !tpValue || !slValue) {
+      setMessage("Choose both bases and enter both values before previewing.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    clearPreview();
+    try {
+      const value = await requestJson<unknown>("/api/v1/protection/preview", {
+        method: "POST",
+        body: JSON.stringify({
+          executionAttemptId: confirmedAttempt.attemptId,
+          takeProfit: { basis: tpBasis, value: Number(tpValue) },
+          stopLoss: { basis: slBasis, value: Number(slValue) },
+        }),
+      });
+      const result = ProtectionPreviewResponseSchema.parse(value);
+      setPreview(result.preview);
+      setConfirmationToken(result.confirmationToken);
+      onProtectionStateChange?.(ProtectionRuntimeStateSchema.parse(result.state));
+      setMessage("Review the fixture targets below, then confirm as a separate action.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Protection preview was rejected.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmProtection(): Promise<void> {
+    if (!preview || !confirmationToken) return;
+    const input = ProtectionConfirmationInputSchema.parse({ previewId: preview.previewId, confirmationToken });
+    setConfirmationToken("");
+    setBusy(true);
+    setMessage("");
+    try {
+      const state = await requestJson<unknown>("/api/v1/protection/confirm", {
+        method: "POST",
+        body: JSON.stringify(input),
+      });
+      onProtectionStateChange?.(ProtectionRuntimeStateSchema.parse(state));
+      setPreview(null);
+      setMessage("Fixture protection result received. No KCEX protective order was created.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Protection confirmation was rejected.");
+      setPreview(null);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const displayPlan = protection.activePlan ?? protection.lastPlan;
+  const displayedPreview = preview ?? protection.activePreview;
+  const formatPrice = (value: number): string => value.toLocaleString(undefined, { maximumSignificantDigits: 12 });
+  const basisLabel = (basis: ProtectionBasis): string => basis === "PRICE_PCT" ? "Price move %" : "Simulated leveraged ROI %";
+  const statusWarning = protection.status === "UNKNOWN" ? (
+    <div className="execution-unknown" role="alert">
+      <strong>PROTECTION OUTCOME UNKNOWN</strong>
+      <span>DO NOT CREATE DUPLICATE PROTECTION</span>
+    </div>
+  ) : protection.status === "ACTIVE" ? (
+    <div className="execution-warning" role="note">
+      <strong>FIXTURE PROTECTION ACTIVE</strong>
+      <span>NO KCEX TP/SL ORDER CREATED</span>
+    </div>
+  ) : protection.status === "TRIGGERED_TP" || protection.status === "TRIGGERED_SL" ? (
+    <div className="execution-warning" role="note">
+      <strong>FIXTURE PRICE CONDITION TRIGGERED</strong>
+      <span>No fill or position close was performed; position state remains UNKNOWN until separately confirmed.</span>
+    </div>
+  ) : (
+    <div className="execution-warning" role="note">
+      <strong>FIXTURE PROTECTION ONLY</strong>
+      <span>NO KCEX TP/SL ORDER EXISTS</span>
+    </div>
+  );
+
+  return (
+    <section className="panel protection-panel" aria-label="Position Protection">
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">Fixture lifecycle · no exchange order</p>
+          <h2>Position Protection</h2>
+        </div>
+        <span className="source-tag">{protection.status}</span>
+      </div>
+      {statusWarning}
+      {displayPlan ? (
+        <div className="metric-grid four protection-metrics">
+          <Metric label="Execution Attempt ID" value={displayPlan.executionAttemptId} />
+          <Metric label="Position Side" value={displayPlan.side} />
+          <Metric label="Entry Price" value={formatPrice(displayPlan.entryPrice)} />
+          <Metric label="Position Size" value={formatPrice(displayPlan.positionSize)} />
+          <Metric label="Leverage" value={`${formatPrice(displayPlan.leverage)}x`} />
+          <Metric label="TP Basis" value={basisLabel(displayPlan.takeProfit.basis)} />
+          <Metric label="TP Value" value={String(displayPlan.takeProfit.value)} />
+          <Metric label="TP Target Price" value={formatPrice(displayPlan.takeProfit.targetPrice)} />
+          <Metric label="SL Basis" value={basisLabel(displayPlan.stopLoss.basis)} />
+          <Metric label="SL Value" value={String(displayPlan.stopLoss.value)} />
+          <Metric label="SL Target Price" value={formatPrice(displayPlan.stopLoss.targetPrice)} />
+        </div>
+      ) : null}
+      {displayedPreview ? (
+        <div className="execution-preview protection-preview" aria-label="Immutable protection preview">
+          <strong>Review immutable targets</strong>
+          <p>Attempt {displayedPreview.executionAttemptId} · {displayedPreview.side} · Entry {formatPrice(displayedPreview.entryPrice)} · Size {formatPrice(displayedPreview.positionSize)} · {formatPrice(displayedPreview.leverage)}x</p>
+          <p>TP {basisLabel(displayedPreview.takeProfit.basis)} {displayedPreview.takeProfit.value} → {formatPrice(displayedPreview.takeProfit.targetPrice)}</p>
+          <p>SL {basisLabel(displayedPreview.stopLoss.basis)} {displayedPreview.stopLoss.value} → {formatPrice(displayedPreview.stopLoss.targetPrice)}</p>
+          <p>Expires {new Date(displayedPreview.expiresAt).toLocaleTimeString()}</p>
+        </div>
+      ) : null}
+      {!hasActiveProtection ? (
+        <div className="protection-controls">
+          <p className="muted-note">Only the latest confirmed fixture attempt and an OPEN runtime position can be protected. Both legs and their basis must be explicit.</p>
+          <label htmlFor="protection-tp-basis">TP Basis</label>
+          <select id="protection-tp-basis" value={tpBasis} disabled={!canPreview || preview !== null} onChange={(event) => { setTpBasis(event.currentTarget.value as ProtectionBasis | ""); clearPreview(); }}>
+            <option value="">Select basis</option>
+            <option value="PRICE_PCT">Price move %</option>
+            <option value="ROI_PCT">Simulated leveraged ROI %</option>
+          </select>
+          <label htmlFor="protection-tp-value">TP Value</label>
+          <input id="protection-tp-value" type="number" min={tpBasis === "ROI_PCT" ? "0.1" : "0.01"} max={tpBasis === "ROI_PCT" ? "500" : "99"} step="any" value={tpValue} disabled={!canPreview || preview !== null} onChange={(event) => { setTpValue(event.currentTarget.value); clearPreview(); }} />
+          <label htmlFor="protection-sl-basis">SL Basis</label>
+          <select id="protection-sl-basis" value={slBasis} disabled={!canPreview || preview !== null} onChange={(event) => { setSlBasis(event.currentTarget.value as ProtectionBasis | ""); clearPreview(); }}>
+            <option value="">Select basis</option>
+            <option value="PRICE_PCT">Price move %</option>
+            <option value="ROI_PCT">Simulated leveraged ROI %</option>
+          </select>
+          <label htmlFor="protection-sl-value">SL Value</label>
+          <input id="protection-sl-value" type="number" min={slBasis === "ROI_PCT" ? "0.1" : "0.01"} max={slBasis === "ROI_PCT" ? "500" : "99"} step="any" value={slValue} disabled={!canPreview || preview !== null} onChange={(event) => { setSlValue(event.currentTarget.value); clearPreview(); }} />
+          <button type="button" onClick={() => void createPreview()} disabled={!canPreview || preview !== null || !tpBasis || !slBasis || !tpValue || !slValue}>
+            {busy ? "Preparing…" : "Preview fixture protection"}
+          </button>
+          <button type="button" className="confirm-submit" onClick={() => void confirmProtection()} disabled={!preview || !confirmationToken || busy}>
+            {busy ? "Confirming…" : "Confirm fixture protection"}
+          </button>
+        </div>
+      ) : null}
+      {protection.status === "ERROR" ? <p className="muted-note" role="status">The fixture adapter explicitly confirmed no activation. A new explicit preview is available.</p> : null}
+      {message ? <p className="execution-message" role="status">{message}</p> : null}
+      {protection.reasons.length > 0 ? <p className="muted-note">State reasons: {protection.reasons.join(", ")}</p> : null}
+      <p className="safety-note">ROI is a fixture leveraged approximation only; fees, funding, slippage, contract rules, and KCEX display semantics are not included.</p>
+    </section>
   );
 }
 
@@ -660,7 +863,7 @@ function AssistedExecutionPanel({
           {busyAction === "CONFIRM" ? "Submitting once…" : "Confirm Single Submission"}
         </button>
       </div>
-      <p className="muted-note">Runtime arm is local intent only, not platform authorization. Position confirmation uses fixture evidence only. No automatic retry, scheduler, or TP/SL is implemented.</p>
+      <p className="muted-note">Runtime arm is local intent only, not platform authorization. Position confirmation uses fixture evidence only. No automatic retry or scheduler is implemented; protection is a separate fixture-only simulation.</p>
       {execution.lastSubmission ? (
         <p className="muted-note" role="status">Last fixture attempt: {execution.lastSubmission.status} · {execution.lastSubmission.side} · {lastSubmissionAt ?? "—"} · {execution.lastSubmission.attemptId}</p>
       ) : null}
@@ -1002,6 +1205,9 @@ export function AuthPanel({
 export function App() {
   const [auth, setAuth] = useState<AuthState | null>(null);
   const [snapshot, setSnapshot] = useState<DashboardSnapshot>(() => createFakeDashboardSnapshot());
+  const [protection, setProtection] = useState<ProtectionRuntimeState>(() => ProtectionRuntimeStateSchema.parse({
+    status: "NONE", provider: "FIXTURE", activePreview: null, activePlan: null, lastPlan: null, reasons: [], updatedAt: new Date().toISOString(),
+  }));
   const [webSocketConnected, setWebSocketConnected] = useState(false);
   const [serviceReady, setServiceReady] = useState(false);
 
@@ -1027,6 +1233,9 @@ export function App() {
         if (!disposed) setServiceReady(false);
       });
     void refreshSnapshot();
+    void requestJson<unknown>("/api/v1/protection/state")
+      .then((value) => { if (!disposed) setProtection(ProtectionRuntimeStateSchema.parse(value)); })
+      .catch(() => { /* Protection state remains the safe empty fixture placeholder. */ });
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const socket = new WebSocket(`${protocol}//${window.location.host}/api/v1/events`);
@@ -1127,6 +1336,24 @@ export function App() {
         if (event.type === "execution.state") {
           setSnapshot((current) => applyExecutionStateToDashboard(current, event.payload));
         }
+        if (event.type === "protection.state") setProtection(event.payload);
+        if (event.type === "protection.activated") {
+          setProtection((current) => ProtectionRuntimeStateSchema.parse({
+            ...current, status: "ACTIVE", activePlan: event.payload, lastPlan: event.payload, activePreview: null, reasons: [], updatedAt: event.timestamp,
+          }));
+        }
+        if (event.type === "protection.triggered") {
+          setProtection((current) => ProtectionRuntimeStateSchema.parse({
+            ...current, status: event.payload.plan.status, activePlan: null, lastPlan: event.payload.plan, activePreview: null, reasons: [], updatedAt: event.timestamp,
+          }));
+        }
+        if (event.type === "protection.unknown") {
+          setProtection((current) => ProtectionRuntimeStateSchema.parse({
+            ...current, status: "UNKNOWN", activePlan: null, lastPlan: event.payload.plan, activePreview: null,
+            reasons: [event.payload.reason === "TRIGGER_AMBIGUOUS" ? "PROTECTION_TRIGGER_AMBIGUOUS" : "PROTECTION_ACTIVATION_UNKNOWN"],
+            updatedAt: event.timestamp,
+          }));
+        }
         if (event.type === "risk.blocked") {
           setSnapshot((current) => applyRiskBlockedToDashboard(current, event.payload));
         }
@@ -1173,6 +1400,8 @@ export function App() {
       auth={auth}
       webSocketConnected={webSocketConnected}
       onExecutionStateChange={(execution) => setSnapshot((current) => applyExecutionStateToDashboard(current, execution))}
+      protection={protection}
+      onProtectionStateChange={setProtection}
     />
   );
 }

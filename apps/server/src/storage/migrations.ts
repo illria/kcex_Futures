@@ -7,7 +7,7 @@ export interface StorageMigration {
   sql: string;
 }
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const STORAGE_MIGRATIONS: readonly StorageMigration[] = [
   {
@@ -125,6 +125,64 @@ export const STORAGE_MIGRATIONS: readonly StorageMigration[] = [
       CREATE UNIQUE INDEX execution_attempts_one_unresolved_idx
         ON execution_attempts(symbol)
         WHERE status IN ('SUBMITTING', 'SUBMITTED', 'CONFIRMING', 'UNKNOWN');
+    `,
+  },
+  {
+    version: 3,
+    name: "fixture_protection_plans",
+    sql: `
+      CREATE TABLE protection_plans (
+        id TEXT PRIMARY KEY NOT NULL,
+        execution_attempt_id TEXT NOT NULL UNIQUE REFERENCES execution_attempts(attempt_id),
+        provider TEXT NOT NULL CHECK(provider = 'FIXTURE'),
+        symbol TEXT NOT NULL CHECK(symbol = 'GPS_USDT'),
+        side TEXT NOT NULL CHECK(side IN ('LONG', 'SHORT')),
+        entry_price REAL NOT NULL CHECK(entry_price > 0),
+        position_size REAL NOT NULL CHECK(position_size > 0),
+        leverage REAL NOT NULL CHECK(leverage > 0 AND leverage <= 10),
+        tp_basis TEXT NOT NULL CHECK(tp_basis IN ('PRICE_PCT', 'ROI_PCT')),
+        tp_value REAL NOT NULL CHECK(tp_value > 0),
+        tp_target_price REAL NOT NULL CHECK(tp_target_price > 0),
+        sl_basis TEXT NOT NULL CHECK(sl_basis IN ('PRICE_PCT', 'ROI_PCT')),
+        sl_value REAL NOT NULL CHECK(sl_value > 0),
+        sl_target_price REAL NOT NULL CHECK(sl_target_price > 0),
+        status TEXT NOT NULL CHECK(status IN ('PLANNED', 'ACTIVE', 'TRIGGERED_TP', 'TRIGGERED_SL', 'UNKNOWN', 'ERROR')),
+        triggered_leg TEXT CHECK(triggered_leg IS NULL OR triggered_leg IN ('TAKE_PROFIT', 'STOP_LOSS')),
+        fixture_protection_id TEXT,
+        created_at TEXT NOT NULL,
+        activated_at TEXT,
+        triggered_at TEXT,
+        updated_at TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1 CHECK(version >= 1),
+        CHECK(status != 'ACTIVE' OR (activated_at IS NOT NULL AND fixture_protection_id IS NOT NULL)),
+        CHECK(status NOT IN ('TRIGGERED_TP', 'TRIGGERED_SL') OR (triggered_at IS NOT NULL AND triggered_leg IS NOT NULL)),
+        CHECK(status != 'TRIGGERED_TP' OR triggered_leg = 'TAKE_PROFIT'),
+        CHECK(status != 'TRIGGERED_SL' OR triggered_leg = 'STOP_LOSS')
+      );
+
+      CREATE INDEX protection_plans_status_idx ON protection_plans(status);
+      CREATE INDEX protection_plans_created_at_idx ON protection_plans(created_at DESC, id DESC);
+      CREATE UNIQUE INDEX protection_plans_one_position_guard_idx
+        ON protection_plans(symbol)
+        WHERE status IN ('PLANNED', 'ACTIVE', 'UNKNOWN');
+
+      CREATE TABLE protection_events (
+        id TEXT PRIMARY KEY NOT NULL,
+        protection_id TEXT NOT NULL REFERENCES protection_plans(id),
+        event_type TEXT NOT NULL CHECK(event_type IN (
+          'PROTECTION_PLANNED', 'PROTECTION_ACTIVATED_FIXTURE', 'PROTECTION_ACTIVATION_FAILED',
+          'PROTECTION_OUTCOME_UNKNOWN', 'PROTECTION_TP_TRIGGERED_FIXTURE', 'PROTECTION_SL_TRIGGERED_FIXTURE',
+          'PROTECTION_RECOVERED_FIXTURE'
+        )),
+        event_time TEXT NOT NULL,
+        payload_json TEXT CHECK(payload_json IS NULL OR json_valid(payload_json)),
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX protection_events_plan_time_idx ON protection_events(protection_id, event_time, id);
+      CREATE TRIGGER protection_events_no_update BEFORE UPDATE ON protection_events
+        BEGIN SELECT RAISE(ABORT, 'protection_events are append-only'); END;
+      CREATE TRIGGER protection_events_no_delete BEFORE DELETE ON protection_events
+        BEGIN SELECT RAISE(ABORT, 'protection_events are append-only'); END;
     `,
   },
 ];

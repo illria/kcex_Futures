@@ -55,7 +55,7 @@ describe("read-only Paper Trading API and WebSocket state", () => {
 
   it("serves the paper runtime through read-only GET endpoints", async () => {
     const { url, storage } = await startServer();
-    expect(storage.getSchemaVersion()).toBe(2);
+    expect(storage.getSchemaVersion()).toBe(3);
     const paperResponse = await fetch(`${url}/api/v1/paper/state`);
     expect(paperResponse.status).toBe(200);
     expect(PaperTradingStateSchema.parse(await paperResponse.json())).toMatchObject({
