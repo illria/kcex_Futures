@@ -171,7 +171,7 @@ export const KcexVerificationReportSchema = z.object({
   }
   if (report.canaryStatus === "PASS") {
     if (report.status !== "PASS") context.addIssue({ code: "custom", path: ["status"], message: "Canary verification requires read verification to pass first." });
-    for (const key of ["canaryEntry", "canaryPosition", "canaryProtection", "unknownHandling"]) {
+    for (const key of ["canaryEntry", "canaryPosition", "canaryProtection", "unknownHandling"] as const) {
       if (report.checks[key] !== "PASS") context.addIssue({ code: "custom", path: ["checks", key], message: "Canary pass requires each live execution check to pass." });
     }
   }

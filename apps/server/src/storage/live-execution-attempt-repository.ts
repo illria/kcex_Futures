@@ -64,10 +64,18 @@ export class LiveExecutionAttemptRepository {
       const dueAt = Date.parse(String(slot.dueAt));
       const nowMs = Date.parse(timestamp);
       if (!Number.isFinite(dueAt) || nowMs < dueAt || nowMs > dueAt + 15 * 60_000) throw new SchedulerSlotConflictError();
-      const id = randomUUID();
+      const id: string = randomUUID();
       this.database.prepare(`INSERT INTO live_execution_attempts(
         attempt_id,attempt_type,date_key,slot_index,symbol,side,margin_usdt,leverage,status,created_at,updated_at,version
-      ) VALUES(?,'SCHEDULED',?,?,?,?,50,10,'SUBMITTING',?,?,1)`).run(id, slot.dateKey, slot.slotIndex, slot.symbol, slot.side, timestamp, timestamp);
+      ) VALUES($attemptId,'SCHEDULED',$dateKey,$slotIndex,$symbol,$side,50,10,'SUBMITTING',$createdAt,$updatedAt,1)`).run({
+        $attemptId: id,
+        $dateKey: String(slot.dateKey),
+        $slotIndex: Number(slot.slotIndex),
+        $symbol: String(slot.symbol),
+        $side: String(slot.side),
+        $createdAt: timestamp,
+        $updatedAt: timestamp,
+      });
       this.database.exec("COMMIT;");
       return this.getById(id);
     } catch (error) {

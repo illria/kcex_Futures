@@ -5,8 +5,6 @@ import { createMemoryStorage } from "../task005/storage-test-helpers.js";
 import { LIVE_CANARY_CONFIRMATION_PHRASE } from "../../packages/shared/src/live-launch.js";
 import { verifiedProfile } from "./helpers.js";
 
-const ATTEMPT_ID = "11111111-1111-4111-8111-111111111111";
-
 describe("TASK-013 isolated one-time Canary", () => {
   it("requires explicit side/margin, preview and exact confirmation; it never consults the scheduler", async () => {
     const storage = await createMemoryStorage(() => new Date("2026-10-01T00:00:00.000Z"));

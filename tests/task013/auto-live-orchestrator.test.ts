@@ -68,10 +68,10 @@ describe("TASK-013 Auto Live runtime gate", () => {
   });
 
   it("a Stop request during preflight prevents claiming or submitting a due slot", async () => {
-    let releaseRefresh: (() => void) | null = null;
+    const refreshGate: { release: () => void } = { release: () => undefined };
     let claims = 0;
     let executions = 0;
-    const refresh = new Promise<void>((resolve) => { releaseRefresh = resolve; });
+    const refresh = new Promise<void>((resolve) => { refreshGate.release = resolve; });
     const service = configured({
       refreshPreflight: async () => refresh,
       claimSlotOnce: async () => { claims += 1; return "44444444-4444-4444-8444-444444444444"; },
@@ -80,7 +80,7 @@ describe("TASK-013 Auto Live runtime gate", () => {
     service.arm(LIVE_AUTOMATION_CONFIRMATION_PHRASE);
     const run = service.onSchedulerSlot(SLOT);
     service.stop();
-    releaseRefresh?.();
+    refreshGate.release();
     expect((await run).status).toBe("DISARMED");
     expect(claims).toBe(0);
     expect(executions).toBe(0);
