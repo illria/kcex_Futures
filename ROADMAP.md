@@ -90,7 +90,7 @@ post-merge GitHub Actions run passed.
 
 See [docs/tasks/TASK-010.md](docs/tasks/TASK-010.md) for the acceptance criteria.
 
-## Phase 7 — TASK-011: Daily Random Scheduler (in progress)
+## Phase 7 — TASK-011: Daily Random Scheduler (review ready)
 
 - create immutable UTC daily plans with deterministic injected random sources
 - enforce a five-minute grid, at least thirty-minute spacing, and a fifteen-minute grace window

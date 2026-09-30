@@ -93,11 +93,11 @@ Spec: [docs/tasks/TASK-010.md](docs/tasks/TASK-010.md)
 
 Fixture protection only. Real KCEX protective-order mutation remains deferred.
 
-## In Progress
+## Review Ready
 
 ### TASK-011 — Daily Random Scheduler
 
-Status: IN PROGRESS
+Status: REVIEW READY
 
 Spec: [docs/tasks/TASK-011.md](docs/tasks/TASK-011.md)
 
