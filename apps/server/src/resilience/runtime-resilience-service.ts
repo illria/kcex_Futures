@@ -309,8 +309,12 @@ export class RuntimeResilienceService {
         },
       });
       this.lastAuditFingerprint = fingerprint;
-    } catch {
-      this.options.logger.warn({ resilienceStatus: next.status }, "Runtime resilience transition could not be audited.");
+    } catch (error) {
+      const errorName = error instanceof Error ? error.name.slice(0, 48) : "UNKNOWN";
+      this.options.logger.warn(
+        { resilienceStatus: next.status, errorName },
+        "Runtime resilience transition could not be audited.",
+      );
     }
   }
 

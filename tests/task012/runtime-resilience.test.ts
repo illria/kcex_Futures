@@ -203,7 +203,8 @@ describe("TASK-012 long-running resilience state", () => {
     expect((await resilience.recover()).reasons).toContain("READ_FAILURE");
     await reader.pollOnce();
     await reader.pollOnce();
-    now = new Date(now.getTime() + 1_000);
+    expect(reader.getReadState().consecutiveReadFailures).toBe(3);
+    now = new Date(now.getTime() + 2_000);
     expect((await resilience.recover()).reasons).toContain("READ_FAILURE_LIMIT");
   });
 
@@ -302,13 +303,18 @@ describe("TASK-012 long-running resilience state", () => {
 
   it("deduplicates persisted transition audits and exposes RESILIENCE through the v4 repository", async () => {
     const storage = await memoryStorage();
+    const auditFailureNames: string[] = [];
     const resilience = new RuntimeResilienceService({
       auth: authStub("AUTH_UNKNOWN"), futuresRead: readService({ status: "UNKNOWN" }), storage,
-      events: new EventBus(), logger: { info: () => undefined, warn: () => undefined } as unknown as Logger,
+      events: new EventBus(), logger: {
+        info: () => undefined,
+        warn: (fields: { errorName?: string }) => { if (fields.errorName) auditFailureNames.push(fields.errorName); },
+      } as unknown as Logger,
       now: () => new Date(nowIso),
     });
     await resilience.recover();
     await resilience.recover();
+    expect(auditFailureNames).toEqual([]);
     const auditEvents = storage.auditEvents.listAuditEvents({ limit: 10 }).filter((event) => event.category === "RESILIENCE");
     expect(auditEvents).toHaveLength(1);
     expect(auditEvents[0]?.payload).toHaveProperty("reasons");
