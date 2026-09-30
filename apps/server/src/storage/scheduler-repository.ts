@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import {
   SchedulerDailyPlanSchema,
@@ -72,21 +71,21 @@ export class SchedulerRepository {
     this.database.exec("BEGIN IMMEDIATE;");
     let created = false;
     try {
-      const existing = this.readDailyPlan(input.dateKey);
+      const existing = this.readDailyPlan(proposed.dateKey);
       if (!existing) {
         this.database.prepare(`
           INSERT INTO daily_plans(date_key, symbol, daily_target, completed, margin_usdt, leverage, created_at, updated_at)
           VALUES (?, 'GPS_USDT', ?, 0, 50, 10, ?, ?)
-        `).run(input.dateKey, input.dailyTarget, timestamp, timestamp);
-        for (const slot of slots) this.insertSlot(slot);
+        `).run(proposed.dateKey, proposed.dailyTarget, proposed.createdAt, proposed.updatedAt);
+        for (const slot of proposed.slots) this.insertSlot(slot);
         this.auditEvents.appendAuditEvent(schedulerAudit(
           "SCHEDULER_DAILY_PLAN_CREATED",
           "A UTC daily schedule was created with immutable fixture slots.",
-          { dateKey: input.dateKey, dailyTarget: input.dailyTarget, slotCount: slots.length },
+          { dateKey: proposed.dateKey, dailyTarget: proposed.dailyTarget, slotCount: proposed.slots.length },
         ));
         created = true;
       }
-      const stored = this.readDailySchedule(input.dateKey);
+      const stored = this.readDailySchedule(proposed.dateKey);
       if (!stored) throw new StorageDataIntegrityError("daily scheduler plan");
       this.database.exec("COMMIT;");
       return { plan: stored, created };

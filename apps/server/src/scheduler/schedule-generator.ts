@@ -5,7 +5,9 @@ export interface RandomSource {
   nextInt(minInclusive: number, maxExclusive: number): number;
 }
 
-export const cryptoRandomSource: RandomSource = Object.freeze({ nextInt: (minInclusive, maxExclusive) => randomInt(minInclusive, maxExclusive) });
+export const cryptoRandomSource: RandomSource = Object.freeze({
+  nextInt: (minInclusive: number, maxExclusive: number) => randomInt(minInclusive, maxExclusive),
+});
 
 export interface GeneratedDailySchedule {
   dateKey: string;
