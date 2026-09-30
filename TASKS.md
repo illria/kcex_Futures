@@ -104,10 +104,10 @@ Spec: [docs/tasks/TASK-011.md](docs/tasks/TASK-011.md)
 Scheduler plans and tracks UTC slots only. It does not automatically arm,
 preview, confirm, submit, or manage positions.
 
-## In Progress
+## Review Ready
 
 ### TASK-012 — Long-Running Resilience and Recovery
 
-Status: IN PROGRESS
+Status: REVIEW READY
 
 Spec: [docs/tasks/TASK-012.md](docs/tasks/TASK-012.md)

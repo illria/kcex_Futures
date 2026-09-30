@@ -100,7 +100,7 @@ See [docs/tasks/TASK-010.md](docs/tasks/TASK-010.md) for the acceptance criteria
 
 See [docs/tasks/TASK-011.md](docs/tasks/TASK-011.md) for acceptance details.
 
-## Phase 8 — TASK-012: Long-Running Resilience (in progress)
+## Phase 8 — TASK-012: Long-Running Resilience (review ready)
 
 - observe authenticated browser, read freshness, storage, and process heartbeat
 - report suspected selector drift after three matching safe observations

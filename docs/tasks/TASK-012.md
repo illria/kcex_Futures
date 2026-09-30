@@ -1,6 +1,6 @@
 # TASK-012 — Long-Running Resilience and Recovery
 
-Status: IN PROGRESS
+Status: REVIEW READY
 
 ## Scope
 
