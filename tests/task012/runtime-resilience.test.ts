@@ -108,7 +108,7 @@ describe("TASK-012 long-running resilience state", () => {
       futuresRead: readService({ status: "READY", snapshot: kcexSnapshot() }, { enabled: false }),
       storage,
       events: new EventBus(),
-      logger: { info: () => undefined } as unknown as Logger,
+      logger: { info: () => undefined, warn: () => undefined } as unknown as Logger,
       now: () => new Date(nowIso),
     });
     expect((await fake.recover()).status).toBe("IDLE");
@@ -118,7 +118,7 @@ describe("TASK-012 long-running resilience state", () => {
       futuresRead: readService({ status: "READY", snapshot: kcexSnapshot() }, { enabled: false }),
       storage,
       events: new EventBus(),
-      logger: { info: () => undefined } as unknown as Logger,
+      logger: { info: () => undefined, warn: () => undefined } as unknown as Logger,
       now: () => new Date(nowIso),
     });
     expect((await disabled.recover()).status).toBe("IDLE");
@@ -141,7 +141,7 @@ describe("TASK-012 long-running resilience state", () => {
     now = new Date(now.getTime() + 180_000);
     const resilience = new RuntimeResilienceService({
       auth: authStub(), futuresRead: reader, storage, events: new EventBus(),
-      logger: { info: () => undefined } as unknown as Logger,
+      logger: { info: () => undefined, warn: () => undefined } as unknown as Logger,
       now: () => new Date(now),
     });
     const state = await resilience.recover();
@@ -171,7 +171,7 @@ describe("TASK-012 long-running resilience state", () => {
     const storage = await memoryStorage();
     const resilience = new RuntimeResilienceService({
       auth: authStub(), futuresRead: reader, storage, events: new EventBus(),
-      logger: { info: () => undefined } as unknown as Logger,
+      logger: { info: () => undefined, warn: () => undefined } as unknown as Logger,
       now: () => new Date(now),
     });
     expect((await resilience.recover()).status).toBe("MANUAL_ACTION");
@@ -187,7 +187,7 @@ describe("TASK-012 long-running resilience state", () => {
     const storage = await memoryStorage();
     const authUnknown = new RuntimeResilienceService({
       auth: authStub("AUTH_UNKNOWN"), futuresRead: readService({ status: "UNKNOWN" }), storage, events: new EventBus(),
-      logger: { info: () => undefined } as unknown as Logger,
+      logger: { info: () => undefined, warn: () => undefined } as unknown as Logger,
       now: () => new Date(nowIso),
     });
     expect((await authUnknown.recover()).reasons).toContain("AUTH_UNKNOWN");
@@ -195,7 +195,7 @@ describe("TASK-012 long-running resilience state", () => {
     const reader = readService({ status: "UNKNOWN", reason: "insufficient evidence" });
     const resilience = new RuntimeResilienceService({
       auth: authStub(), futuresRead: reader, storage, events: new EventBus(),
-      logger: { info: () => undefined } as unknown as Logger,
+      logger: { info: () => undefined, warn: () => undefined } as unknown as Logger,
       now: () => new Date(nowIso),
     });
     await reader.pollOnce();
@@ -214,7 +214,7 @@ describe("TASK-012 long-running resilience state", () => {
     const storage = await memoryStorage();
     const resilience = new RuntimeResilienceService({
       auth: authStub(authStatus), futuresRead: readService({ status: "UNKNOWN" }), storage,
-      events: new EventBus(), logger: { info: () => undefined } as unknown as Logger,
+      events: new EventBus(), logger: { info: () => undefined, warn: () => undefined } as unknown as Logger,
       now: () => new Date(nowIso),
     });
     const state = await resilience.recover();
@@ -227,7 +227,7 @@ describe("TASK-012 long-running resilience state", () => {
     const service = new FuturesReadService({
       adapter: { readSnapshot: async () => ({ status: "SESSION_LOST" }) },
       events: new EventBus(),
-      logger: { info: () => undefined } as unknown as Logger,
+      logger: { info: () => undefined, warn: () => undefined } as unknown as Logger,
       authStatus: () => "AUTHENTICATED",
       enabled: true,
       pollMs: 5_000,
@@ -246,7 +246,7 @@ describe("TASK-012 long-running resilience state", () => {
       const service = new FuturesReadService({
         adapter: { readSnapshot: async () => ({ status: "READY", snapshot: kcexSnapshot() }) },
         events: new EventBus(),
-        logger: { info: () => undefined } as unknown as Logger,
+        logger: { info: () => undefined, warn: () => undefined } as unknown as Logger,
         authStatus: () => currentStatus,
         enabled: true,
         pollMs: 5_000,
@@ -271,7 +271,7 @@ describe("TASK-012 long-running resilience state", () => {
       await reader.pollOnce();
       const resilience = new RuntimeResilienceService({
         auth: authStub("AUTHENTICATED", "KCEX", browser), futuresRead: reader, storage,
-        events: new EventBus(), logger: { info: () => undefined } as unknown as Logger,
+        events: new EventBus(), logger: { info: () => undefined, warn: () => undefined } as unknown as Logger,
         now: () => new Date(nowIso),
       });
       const state = await resilience.recover();
@@ -289,7 +289,7 @@ describe("TASK-012 long-running resilience state", () => {
     storage.close();
     const resilience = new RuntimeResilienceService({
       auth: authStub(), futuresRead: reader, storage, events: new EventBus(),
-      logger: { info: () => undefined } as unknown as Logger,
+      logger: { info: () => undefined, warn: () => undefined } as unknown as Logger,
       now: () => new Date(nowIso),
     });
     const state = await resilience.recover();
@@ -302,7 +302,7 @@ describe("TASK-012 long-running resilience state", () => {
     const storage = await memoryStorage();
     const resilience = new RuntimeResilienceService({
       auth: authStub("AUTH_UNKNOWN"), futuresRead: readService({ status: "UNKNOWN" }), storage,
-      events: new EventBus(), logger: { info: () => undefined } as unknown as Logger,
+      events: new EventBus(), logger: { info: () => undefined, warn: () => undefined } as unknown as Logger,
       now: () => new Date(nowIso),
     });
     await resilience.recover();
@@ -333,7 +333,7 @@ describe("TASK-012 long-running resilience state", () => {
     const fixtureDir = await mkdtemp(join(tmpdir(), "task012-http-"));
     const vault = new EncryptedCredentialVault(join(fixtureDir, "vault.json"));
     const events = new EventBus();
-    const logger = { info: () => undefined } as unknown as Logger;
+    const logger = { info: () => undefined, warn: () => undefined } as unknown as Logger;
     const auth = new AuthService(vault, events, logger, new FakeAuthAdapter());
     const storage = await memoryStorage();
     const resilience = new RuntimeResilienceService({ auth, storage, events, logger, now: () => new Date(nowIso) });
