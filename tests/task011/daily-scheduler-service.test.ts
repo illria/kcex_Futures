@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DailySchedulerService } from "../../apps/server/src/scheduler/daily-scheduler-service.js";
 import { createConfirmedFixtureAttempt, createSchedulerSetup, TASK011_BASE_TIME } from "./helpers.js";
 
 describe("TASK-011 durable daily scheduler", () => {
@@ -101,6 +102,179 @@ describe("TASK-011 durable daily scheduler", () => {
       expect(state.completed).toBe(1);
       expect(setup.storage.scheduler.getSlot(due.id)).toMatchObject({ status: "COMPLETED", executionAttemptId: attemptId });
       expect(setup.storage.scheduler.getDailySchedule("2026-10-01")?.completed).toBe(1);
+    } finally {
+      await setup.cleanup();
+    }
+  });
+
+  it("reconciles a confirmed DUE slot after restart before expiring its grace window", async () => {
+    const setup = await createSchedulerSetup({ startAt: "2026-10-01T00:30:00.000Z" });
+    let restarted: DailySchedulerService | null = null;
+    try {
+      expect((await setup.scheduler.recover()).status).toBe("DUE");
+      const due = setup.storage.scheduler.getCurrentDueSlot("2026-10-01")!;
+      setup.setNow("2026-10-01T00:44:00.000Z");
+      const attemptId = createConfirmedFixtureAttempt(setup.storage, {
+        side: due.side,
+        confirmedAt: "2026-10-01T00:44:00.000Z",
+      });
+
+      setup.scheduler.stop();
+      setup.setNow("2026-10-01T00:46:00.000Z");
+      restarted = new DailySchedulerService({
+        storage: setup.storage,
+        events: setup.events,
+        positionSource: { getPositionState: () => "FLAT" },
+        getKillSwitchStatus: () => "CLEAR",
+        now: () => new Date("2026-10-01T00:46:00.000Z"),
+      });
+      const state = await restarted.recover();
+      expect(state.status).toBe("COMPLETE");
+      expect(state.completed).toBe(1);
+      expect(setup.storage.scheduler.getSlot(due.id)).toMatchObject({
+        status: "COMPLETED",
+        executionAttemptId: attemptId,
+        completedAt: "2026-10-01T00:44:00.000Z",
+      });
+      expect(setup.storage.scheduler.getDailySchedule("2026-10-01")?.completed).toBe(1);
+
+      const later = new DailySchedulerService({
+        storage: setup.storage,
+        events: setup.events,
+        positionSource: { getPositionState: () => "FLAT" },
+        getKillSwitchStatus: () => "CLEAR",
+        now: () => new Date("2026-10-01T00:47:00.000Z"),
+      });
+      await later.recover();
+      expect(setup.storage.scheduler.getSlot(due.id)?.status).toBe("COMPLETED");
+      later.stop();
+    } finally {
+      restarted?.stop();
+      await setup.cleanup();
+    }
+  });
+
+  it("marks a recovered DUE slot MISSED after grace when no matching confirmation exists", async () => {
+    const setup = await createSchedulerSetup({ startAt: "2026-10-01T00:30:00.000Z" });
+    let restarted: DailySchedulerService | null = null;
+    try {
+      expect((await setup.scheduler.recover()).status).toBe("DUE");
+      const due = setup.storage.scheduler.getCurrentDueSlot("2026-10-01")!;
+      setup.scheduler.stop();
+      setup.setNow("2026-10-01T00:46:00.000Z");
+      restarted = new DailySchedulerService({
+        storage: setup.storage,
+        events: setup.events,
+        positionSource: { getPositionState: () => "FLAT" },
+        getKillSwitchStatus: () => "CLEAR",
+        now: () => new Date("2026-10-01T00:46:00.000Z"),
+      });
+
+      const state = await restarted.recover();
+      expect(state.status).toBe("COMPLETE");
+      expect(state.missed).toBe(1);
+      expect(setup.storage.scheduler.getSlot(due.id)).toMatchObject({
+        status: "MISSED",
+        missReason: "WINDOW_EXPIRED",
+        dueAt: "2026-10-01T00:30:00.000Z",
+      });
+    } finally {
+      restarted?.stop();
+      await setup.cleanup();
+    }
+  });
+
+  it("reconciles a SCHEDULED slot after a missed tick when confirmation was inside its window", async () => {
+    const setup = await createSchedulerSetup({ startAt: "2026-10-01T00:00:00.000Z" });
+    try {
+      await setup.scheduler.recover();
+      const scheduled = setup.storage.scheduler.listSlots("2026-10-01")[0]!;
+      expect(scheduled).toMatchObject({ dueAt: "2026-10-01T00:30:00.000Z", status: "SCHEDULED" });
+      setup.setNow("2026-10-01T00:40:00.000Z");
+      const attemptId = createConfirmedFixtureAttempt(setup.storage, {
+        side: scheduled.side,
+        confirmedAt: "2026-10-01T00:40:00.000Z",
+      });
+
+      setup.setNow("2026-10-01T00:46:00.000Z");
+      const state = await setup.scheduler.tick();
+      expect(state.status).toBe("COMPLETE");
+      expect(state.completed).toBe(1);
+      expect(setup.storage.scheduler.getSlot(scheduled.id)).toMatchObject({
+        status: "COMPLETED",
+        executionAttemptId: attemptId,
+        completedAt: "2026-10-01T00:40:00.000Z",
+      });
+      expect(setup.storage.scheduler.getDailySchedule("2026-10-01")?.completed).toBe(1);
+    } finally {
+      await setup.cleanup();
+    }
+  });
+
+  it("marks an expired slot MISSED when no matching confirmed attempt exists", async () => {
+    const setup = await createSchedulerSetup({ startAt: "2026-10-01T00:00:00.000Z" });
+    try {
+      await setup.scheduler.recover();
+      const scheduled = setup.storage.scheduler.listSlots("2026-10-01")[0]!;
+      setup.setNow("2026-10-01T00:46:00.000Z");
+      const state = await setup.scheduler.tick();
+      expect(state.status).toBe("COMPLETE");
+      expect(state.missed).toBe(1);
+      expect(setup.storage.scheduler.getSlot(scheduled.id)).toMatchObject({
+        status: "MISSED",
+        missReason: "WINDOW_EXPIRED",
+        dueAt: "2026-10-01T00:30:00.000Z",
+      });
+    } finally {
+      await setup.cleanup();
+    }
+  });
+
+  it("does not match a wrong-side confirmation when an expired slot is reconciled", async () => {
+    const setup = await createSchedulerSetup({ startAt: "2026-10-01T00:30:00.000Z" });
+    try {
+      await setup.scheduler.recover();
+      const due = setup.storage.scheduler.getCurrentDueSlot("2026-10-01")!;
+      setup.setNow("2026-10-01T00:40:00.000Z");
+      createConfirmedFixtureAttempt(setup.storage, {
+        side: due.side === "LONG" ? "SHORT" : "LONG",
+        confirmedAt: "2026-10-01T00:40:00.000Z",
+      });
+
+      setup.setNow("2026-10-01T00:46:00.000Z");
+      await setup.scheduler.tick();
+      expect(setup.storage.scheduler.getSlot(due.id)).toMatchObject({
+        status: "MISSED",
+        missReason: "WINDOW_EXPIRED",
+      });
+    } finally {
+      await setup.cleanup();
+    }
+  });
+
+  it("degrades and preserves an expired slot when multiple unbound confirmations match", async () => {
+    const setup = await createSchedulerSetup({ startAt: "2026-10-01T00:00:00.000Z" });
+    try {
+      await setup.scheduler.recover();
+      const scheduled = setup.storage.scheduler.listSlots("2026-10-01")[0]!;
+      setup.setNow("2026-10-01T00:40:00.000Z");
+      createConfirmedFixtureAttempt(setup.storage, {
+        side: scheduled.side,
+        confirmedAt: "2026-10-01T00:40:00.000Z",
+        sequence: 2800,
+      });
+      createConfirmedFixtureAttempt(setup.storage, {
+        side: scheduled.side,
+        confirmedAt: "2026-10-01T00:42:00.000Z",
+        sequence: 2900,
+      });
+
+      setup.setNow("2026-10-01T00:46:00.000Z");
+      const state = await setup.scheduler.tick();
+      expect(state.status).toBe("DEGRADED");
+      expect(state.blockReasons).toContain("AMBIGUOUS_EXECUTION_MATCH");
+      expect(setup.storage.scheduler.getSlot(scheduled.id)).toMatchObject({ status: "SCHEDULED" });
+      expect(setup.storage.scheduler.getSlot(scheduled.id)?.status).not.toBe("MISSED");
     } finally {
       await setup.cleanup();
     }

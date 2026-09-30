@@ -106,12 +106,39 @@ export class DailySchedulerService {
         return this.publishDegraded(dateKey, null, "STORAGE_DEGRADED", now);
       }
 
+      let plan = this.options.storage.scheduler.getDailySchedule(dateKey);
+      currentPlan = plan;
+
+      // Durable confirmations take precedence over expiry, including after a restart or missed tick.
+      for (const slot of this.options.storage.scheduler.listReconciliationCandidates(timestamp, dateKey)) {
+        const matches = this.options.storage.scheduler.findUnboundConfirmedMatchesForSlot(slot);
+        if (matches.length > 1) {
+          return this.publishDegraded(
+            dateKey,
+            currentPlan,
+            "AMBIGUOUS_EXECUTION_MATCH",
+            now,
+            slot.dateKey === dateKey ? slot : null,
+          );
+        }
+        if (matches.length === 1) {
+          this.options.storage.scheduler.completeSlotWithAttempt({
+            slotId: slot.id,
+            expectedVersion: slot.version,
+            executionAttemptId: matches[0]!,
+          });
+          if (slot.dateKey === dateKey) {
+            currentPlan = this.options.storage.scheduler.getDailySchedule(dateKey);
+          }
+        }
+      }
+
       const expiringDue = this.options.storage.scheduler.getCurrentDueSlot(dateKey);
       const dueMissReason = expiringDue && now.getTime() > Date.parse(expiringDue.dueAt) + SCHEDULER_GRACE_MS
         ? missReasonForBlockers(await this.computeBlockers())
         : "WINDOW_EXPIRED";
       this.options.storage.scheduler.expireSlots(timestamp, dateKey, dueMissReason);
-      let plan = this.options.storage.scheduler.getDailySchedule(dateKey);
+      plan = this.options.storage.scheduler.getDailySchedule(dateKey);
       if (!plan) {
         const generated = generateDailySchedule(dateKey, now, this.randomSource, this.idGenerator);
         const created = this.options.storage.scheduler.createDailySchedule({
@@ -144,28 +171,7 @@ export class DailySchedulerService {
         });
       }
 
-      let dueSlot = this.options.storage.scheduler.getCurrentDueSlot(dateKey);
-      if (dueSlot) {
-        const windowEndsAt = new Date(Date.parse(dueSlot.dueAt) + SCHEDULER_GRACE_MS).toISOString();
-        const attempts = this.options.storage.executionAttempts.listConfirmedAttemptsInRange(dueSlot.dueAt, windowEndsAt);
-        if (attempts.length > 1000) return this.publishDegraded(dateKey, plan, "AMBIGUOUS_EXECUTION_MATCH", now, dueSlot);
-        const matches = attempts.filter((attempt) => attempt.symbol === dueSlot!.symbol
-          && attempt.side === dueSlot!.side
-          && attempt.confirmedAt !== null
-          && !this.options.storage.scheduler.hasExecutionAttemptBinding(attempt.attemptId));
-        if (matches.length > 1) return this.publishDegraded(dateKey, plan, "AMBIGUOUS_EXECUTION_MATCH", now, dueSlot);
-        if (matches.length === 1) {
-          this.options.storage.scheduler.completeSlotWithAttempt({
-            slotId: dueSlot.id,
-            expectedVersion: dueSlot.version,
-            executionAttemptId: matches[0]!.attemptId,
-          });
-          plan = this.options.storage.scheduler.getDailySchedule(dateKey);
-          if (!plan) throw new SchedulerRuntimeError("SCHEDULER_STATE_INVALID");
-          currentPlan = plan;
-          dueSlot = this.options.storage.scheduler.getCurrentDueSlot(dateKey);
-        }
-      }
+      const dueSlot = this.options.storage.scheduler.getCurrentDueSlot(dateKey);
 
       const refreshedHealth = this.options.storage.getHealth().status;
       if (refreshedHealth !== "READY") return this.publishDegraded(dateKey, plan, "STORAGE_DEGRADED", now, dueSlot);

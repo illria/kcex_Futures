@@ -13,6 +13,7 @@ The scheduler plans, marks slots DUE or MISSED, and tracks an entry only when it
 - SQLite schema v4 appends `scheduler_slots`; migrations 1–3 remain unchanged.
 - Daily header, all slots, and `SCHEDULER_DAILY_PLAN_CREATED` audit are inserted in one transaction.
 - Existing dates are read as stored and never randomized again or overwritten.
+- Recovery reconciles unbound, same-symbol/same-side confirmations from the inclusive slot window before expiry. A valid durable confirmation completes a `SCHEDULED` or `DUE` slot even when the next tick arrives after the grace period. No match expires the slot; multiple matches preserve it in `DEGRADED` for review.
 - Completing a slot, binding its attempt, updating `daily_plans.completed`, and writing the audit event are atomic.
 - UTC date rollover marks unfinished prior-day slots MISSED with `DAY_ROLLOVER` and creates the new day's plan. History is retained.
 - Slots past `dueAt + 15 minutes` become MISSED. Startup does not catch up, shift, stack, or force-close positions.

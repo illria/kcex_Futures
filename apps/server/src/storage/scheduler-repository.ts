@@ -130,6 +130,38 @@ export class SchedulerRepository {
     return row ? parseSlotRow(row) : null;
   }
 
+  listReconciliationCandidates(now: string, currentDateKey: string): SchedulerSlot[] {
+    const timestamp = parseTimestamp(now, "scheduler reconciliation timestamp");
+    const rows = this.database.prepare(`
+      SELECT ${SLOT_COLUMNS} FROM scheduler_slots
+      WHERE status IN ('SCHEDULED', 'DUE') AND date_key <= ? AND due_at <= ?
+      ORDER BY date_key ASC, due_at ASC, slot_index ASC LIMIT 1000
+    `).all(currentDateKey, timestamp) as unknown as RawRow[];
+    return rows.map(parseSlotRow);
+  }
+
+  findUnboundConfirmedMatchesForSlot(slot: Pick<SchedulerSlot, "symbol" | "side" | "dueAt">): string[] {
+    const dueAtMs = Date.parse(slot.dueAt);
+    if (!Number.isFinite(dueAtMs)) throw new RangeError("Scheduler due time is invalid.");
+    const windowEndsAt = new Date(dueAtMs + GRACE_MS).toISOString();
+    const rows = this.database.prepare(`
+      SELECT attempt.attempt_id AS attemptId
+      FROM execution_attempts AS attempt
+      WHERE attempt.status = 'CONFIRMED'
+        AND attempt.symbol = ?
+        AND attempt.side = ?
+        AND attempt.confirmed_at >= ?
+        AND attempt.confirmed_at <= ?
+        AND NOT EXISTS (
+          SELECT 1 FROM scheduler_slots AS bound
+          WHERE bound.execution_attempt_id = attempt.attempt_id
+        )
+      ORDER BY attempt.confirmed_at ASC, attempt.attempt_id ASC
+      LIMIT 2
+    `).all(slot.symbol, slot.side, slot.dueAt, windowEndsAt) as unknown as Array<{ attemptId: string }>;
+    return rows.map((row) => row.attemptId);
+  }
+
   hasExecutionAttemptBinding(attemptId: string): boolean {
     const row = this.database.prepare(`
       SELECT 1 AS found FROM scheduler_slots WHERE execution_attempt_id = ? LIMIT 1
@@ -195,7 +227,9 @@ export class SchedulerRepository {
     this.database.exec("BEGIN IMMEDIATE;");
     try {
       const slot = this.readSlot(input.slotId);
-      if (!slot || slot.status !== "DUE" || slot.version !== input.expectedVersion) throw new SchedulerSlotConflictError();
+      if (!slot || (slot.status !== "DUE" && slot.status !== "SCHEDULED") || slot.version !== input.expectedVersion) {
+        throw new SchedulerSlotConflictError();
+      }
       const attempt = this.database.prepare(`
         SELECT status, symbol, side, confirmed_at AS confirmedAt
         FROM execution_attempts WHERE attempt_id = ?
@@ -218,7 +252,7 @@ export class SchedulerRepository {
       const changed = this.database.prepare(`
         UPDATE scheduler_slots SET status = 'COMPLETED', execution_attempt_id = ?, completed_at = ?,
           updated_at = ?, version = version + 1
-        WHERE id = ? AND version = ? AND status = 'DUE'
+        WHERE id = ? AND version = ? AND status IN ('DUE', 'SCHEDULED')
       `).run(input.executionAttemptId, attempt.confirmedAt, updatedAt, input.slotId, input.expectedVersion);
       if (Number(changed.changes) !== 1) throw new SchedulerSlotConflictError();
       const completed = this.database.prepare(`
@@ -232,7 +266,7 @@ export class SchedulerRepository {
       if (Number(header.changes) !== 1) throw new StorageDataIntegrityError("daily plan completion count");
       this.auditEvents.appendAuditEvent(schedulerAudit(
         "SCHEDULER_SLOT_COMPLETED",
-        "A due slot matched one manually confirmed fixture entry.",
+        "A scheduled slot matched one manually confirmed fixture entry.",
         { ...slotAuditPayload(slot), executionAttemptId: input.executionAttemptId },
       ));
       this.database.exec("COMMIT;");
