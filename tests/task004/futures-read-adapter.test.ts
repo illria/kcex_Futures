@@ -75,6 +75,12 @@ describe("KCEX futures read-only adapter", () => {
     const partial = await new KcexFuturesReadAdapter(await sourceFromFixture("gps-partial.html")).readSnapshot();
     expect(partial.status).toBe("PARTIAL");
     expect(partial.snapshot?.market.markPrice).toBeNull();
+    expect(partial.diagnostics?.authenticated).toBe(true);
+    expect(partial.diagnostics?.trustedPage).toBe(true);
+    expect(partial.diagnostics?.missingFields).toEqual(["markPrice", "leverage"]);
+    expect(partial.diagnostics?.evidence.position).toBe(true);
+    expect(partial.diagnostics?.evidence.openOrders).toBe(true);
+    expect(JSON.stringify(partial.diagnostics)).not.toContain("0.012345");
     const malformed = await new KcexFuturesReadAdapter(await sourceFromFixture("malformed-numbers.html")).readSnapshot();
     expect(malformed.snapshot?.market.lastPrice).toBeNull();
     expect(malformed.snapshot?.contract.leverage).toBeNull();

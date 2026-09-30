@@ -16,6 +16,8 @@ import { SchedulerStateSchema, createFixtureSchedulerState } from "../../../../p
 import {
   MASTER_KEY_MIN_LENGTH,
   DashboardSnapshotSchema,
+  ResilienceStateSchema,
+  type ResilienceState,
   parseDashboardEvent,
   type AuthState,
   type DashboardEvent,
@@ -52,6 +54,7 @@ import {
 import type { ProtectionService } from "../protection/protection-service.js";
 import { ProtectionServiceError } from "../protection/protection-service.js";
 import type { DailySchedulerService } from "../scheduler/daily-scheduler-service.js";
+import type { RuntimeResilienceService } from "../resilience/runtime-resilience-service.js";
 
 const UnlockInputSchema = z.object({
   masterKey: z.string().min(MASTER_KEY_MIN_LENGTH).max(4096),
@@ -76,6 +79,7 @@ export interface DashboardServerOptions {
   execution?: AssistedLiveService;
   protection?: ProtectionService;
   scheduler?: DailySchedulerService;
+  resilience?: RuntimeResilienceService;
 }
 
 class HttpError extends Error {
@@ -217,6 +221,7 @@ async function handleApiRequest(
   execution: AssistedLiveService | undefined,
   protection: ProtectionService | undefined,
   scheduler: DailySchedulerService | undefined,
+  resilience: RuntimeResilienceService | undefined,
 ): Promise<boolean> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "127.0.0.1"}`);
   const method = request.method ?? "GET";
@@ -254,6 +259,35 @@ async function handleApiRequest(
   if (method === "GET" && url.pathname === "/api/v1/scheduler/state") {
     const state = scheduler?.getState() ?? createFixtureSchedulerState();
     sendJson(response, 200, SchedulerStateSchema.parse(state));
+    return true;
+  }
+
+  if (method === "GET" && url.pathname === "/api/v1/resilience/state") {
+    const authState = auth.getState();
+    const readState = futuresRead?.getReadState();
+    const health = storage?.getHealth();
+    const fallback: ResilienceState = ResilienceStateSchema.parse({
+      status: authState.authProvider === "FAKE" || !futuresRead?.enabled ? "IDLE" : "DEGRADED",
+      reasons: [],
+      authStatus: authState.status,
+      browserStatus: futuresRead?.getBrowserStatus() ?? "NOT_STARTED",
+      browserHealth: auth.inspectBrowserHealth(),
+      readStatus: readState?.status ?? null,
+      readHealth: readState?.health ?? "UNKNOWN",
+      consecutiveReadFailures: readState?.consecutiveReadFailures ?? 0,
+      lastReadAttemptAt: futuresRead?.getLastReadAttemptAt() ?? null,
+      lastHealthyAt: null,
+      lastRecoveryAt: null,
+      selectorDrift: futuresRead?.getSelectorDriftObservation() ?? {
+        suspected: false, consecutiveEvidenceFailures: 0, missingFields: [],
+      },
+      storageStatus: health?.status ?? "DEGRADED",
+      readStaleAfterMs: futuresRead?.staleAfterMs ?? 15_000,
+      automaticLogin: false,
+      automaticTrading: false,
+      updatedAt: new Date().toISOString(),
+    });
+    sendJson(response, 200, resilience?.getState() ?? fallback);
     return true;
   }
 
@@ -640,6 +674,7 @@ function initialEvents(
   execution?: AssistedLiveService,
   protection?: ProtectionService,
   scheduler?: DailySchedulerService,
+  resilience?: RuntimeResilienceService,
 ): DashboardEvent[] {
   const now = new Date().toISOString();
   const latest = futuresRead?.getLatestSnapshot();
@@ -719,11 +754,17 @@ function initialEvents(
       scheduler?.getState() ?? createFixtureSchedulerState(now),
     ) },
     { version: 1, type: "system.log", timestamp: now, payload: snapshot.logs[0] },
+    ...(resilience ? [{ version: 1, type: "resilience.state", timestamp: now, payload: resilience.getState() }] : []),
     {
       version: 1,
       type: "system.heartbeat",
       timestamp: now,
-      payload: { status: "OK", liveTrading: false, uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000) },
+      payload: {
+        status: "OK",
+        liveTrading: false,
+        uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
+        resilienceStatus: resilience?.getState().status ?? "IDLE",
+      },
     },
   );
   return proposed.map(parseDashboardEvent);
@@ -748,6 +789,7 @@ export function createDashboardServer(options: DashboardServerOptions): Server {
           options.execution,
           options.protection,
           options.scheduler,
+          options.resilience,
         );
         if (!handled) await serveStatic(request, response, options.staticRoot, loopbackHost);
         if (!handled && !response.writableEnded) sendJson(response, 404, { error: "Not found." });
@@ -789,7 +831,10 @@ export function createDashboardServer(options: DashboardServerOptions): Server {
     const unsubscribe = options.events.subscribe((event) => {
       if (webSocket.readyState === WebSocket.OPEN) webSocket.send(JSON.stringify(event));
     });
-    for (const event of initialEvents(options.auth.getState(), startedAt, options.futuresRead, options.paperTrading, options.risk, options.execution, options.protection, options.scheduler)) {
+    for (const event of initialEvents(
+      options.auth.getState(), startedAt, options.futuresRead, options.paperTrading, options.risk,
+      options.execution, options.protection, options.scheduler, options.resilience,
+    )) {
       webSocket.send(JSON.stringify(event));
     }
     webSocket.on("message", () => webSocket.close(1008, "Read-only event stream."));

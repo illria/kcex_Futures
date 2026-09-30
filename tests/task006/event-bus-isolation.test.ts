@@ -16,7 +16,7 @@ describe("EventBus observer isolation", () => {
       version: 1,
       type: "system.heartbeat",
       timestamp,
-      payload: { status: "OK", liveTrading: false, uptimeSeconds: 0 },
+      payload: { status: "OK", liveTrading: false, uptimeSeconds: 0, resilienceStatus: "IDLE" },
     })).not.toThrow();
     expect(received).toEqual(["system.heartbeat"]);
   });

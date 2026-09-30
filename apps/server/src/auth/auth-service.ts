@@ -1,8 +1,10 @@
 import type { Logger } from "pino";
 import {
   AuthStateSchema,
+  BrowserHealthInspectionSchema,
   type AuthState,
   type AuthStatus,
+  type BrowserHealthInspection,
 } from "../../../../packages/shared/src/protocol.js";
 import { EventBus } from "../realtime/event-bus.js";
 import { EncryptedSessionStore } from "../session/encrypted-session-store.js";
@@ -148,6 +150,31 @@ export class AuthService {
     this.transition("SESSION_CHECK");
     await this.applyAdapterResult(await this.adapter.checkSession());
     return this.snapshot();
+  }
+
+  async handleRuntimeSignal(signal: "SESSION_LOST" | "MANUAL_CHALLENGE" | "AUTH_UNKNOWN" | "OTP_REQUIRED"): Promise<AuthState> {
+    if (!(["SESSION_LOST", "MANUAL_CHALLENGE", "AUTH_UNKNOWN", "OTP_REQUIRED"] as readonly string[]).includes(signal)) {
+      throw new TypeError("Unsupported runtime authentication signal.");
+    }
+    this.clearPendingOtp();
+    if (signal === "SESSION_LOST") {
+      await this.sessionStore?.clear().catch(() => {
+        this.logger.warn({ authProvider: this.adapter.provider }, "Encrypted session cleanup failed after session loss.");
+      });
+    }
+    if (signal === "OTP_REQUIRED") this.establishPendingOtp();
+    this.transition(signal);
+    return this.snapshot();
+  }
+
+  inspectBrowserHealth(): BrowserHealthInspection {
+    const inspected = this.adapter.inspectBrowserHealth?.() ?? {
+      browserConnected: false,
+      pageAvailable: false,
+      pageClosed: false,
+      trustedPage: false,
+    };
+    return BrowserHealthInspectionSchema.parse(inspected);
   }
 
   close(): void {

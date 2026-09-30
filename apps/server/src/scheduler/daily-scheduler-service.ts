@@ -12,6 +12,7 @@ import type { KillSwitchStatus } from "../../../../packages/shared/src/risk.js";
 import type { EventBus } from "../realtime/event-bus.js";
 import type { StorageService } from "../storage/storage-service.js";
 import type { ExecutionPositionSource } from "../execution/execution-position-source.js";
+import type { ResilienceStatus } from "../../../../packages/shared/src/protocol.js";
 import { cryptoRandomSource, generateDailySchedule, type RandomSource } from "./schedule-generator.js";
 import { SchedulerRuntimeError } from "./scheduler-errors.js";
 
@@ -23,6 +24,7 @@ export interface DailySchedulerServiceOptions {
   events: EventBus;
   positionSource: ExecutionPositionSource;
   getKillSwitchStatus: () => Promise<KillSwitchStatus> | KillSwitchStatus;
+  getResilienceStatus?: () => ResilienceStatus;
   now?: () => Date;
   randomSource?: RandomSource;
   idGenerator?: () => string;
@@ -218,6 +220,8 @@ export class DailySchedulerService {
 
   private async computeBlockers(): Promise<SchedulerBlockReason[]> {
     const blockers: SchedulerBlockReason[] = [];
+    const resilienceStatus = this.options.getResilienceStatus?.() ?? "IDLE";
+    if (resilienceStatus === "MANUAL_ACTION" || resilienceStatus === "HALTED") blockers.push("RUNTIME_UNHEALTHY");
     const position = await this.options.positionSource.getPositionState();
     if (position === "OPEN") blockers.push("POSITION_NOT_FLAT");
     else if (position !== "FLAT") blockers.push("POSITION_UNKNOWN");

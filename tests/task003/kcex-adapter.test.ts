@@ -70,6 +70,7 @@ function pageFixture(options: {
 
   const page = {
     url: () => state.url,
+    isClosed: () => false,
     goto: async (target: string) => {
       state.url = options.redirectTo ?? target;
       return null;
@@ -149,6 +150,20 @@ describe("KcexAuthAdapter result handling", () => {
     });
     const adapter = new KcexAuthAdapter({ page: fixture.page });
     await expect(adapter.checkSession()).resolves.toBe(expected);
+  });
+
+  it("does not treat generic body sign-out text as authenticated evidence", async () => {
+    const fixture = pageFixture({ bodyText: "Log out" });
+    const adapter = new KcexAuthAdapter({ page: fixture.page });
+    await expect(adapter.checkSession()).resolves.toBe("AUTH_UNKNOWN");
+  });
+
+  it("returns only safe browser health flags without exposing page details", () => {
+    const fixture = pageFixture();
+    const health = new KcexAuthAdapter({ page: fixture.page }).inspectBrowserHealth();
+    expect(health).toEqual({ browserConnected: true, pageAvailable: true, pageClosed: false, trustedPage: true });
+    expect(Object.keys(health).sort()).toEqual(["browserConnected", "pageAvailable", "pageClosed", "trustedPage"]);
+    expect(JSON.stringify(health)).not.toContain("kcex.com");
   });
 
   it.each([

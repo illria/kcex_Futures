@@ -7,8 +7,9 @@ import {
   type Page,
 } from "playwright";
 import { KCEX_SELECTORS } from "../../../../src/kcex/selectors.js";
-import { assertTrustedKcexBaseUrl, assertTrustedKcexUrl } from "../../../../src/kcex/trusted-host.js";
+import { assertTrustedKcexBaseUrl, assertTrustedKcexUrl, isTrustedKcexUrl } from "../../../../src/kcex/trusted-host.js";
 import { buildGpsUsdtFuturesUrl, DEFAULT_KCEX_BASE_URL } from "../../../../src/kcex/urls.js";
+import type { BrowserHealthInspection } from "../../../../packages/shared/src/protocol.js";
 import type { AuthAdapter, AuthAdapterResult, AuthCredentials } from "./auth-adapter.js";
 
 export interface KcexAuthAdapterOptions {
@@ -172,6 +173,25 @@ export class KcexAuthAdapter implements AuthAdapter {
     return result;
   }
 
+  inspectBrowserHealth(): BrowserHealthInspection {
+    const page = this.page;
+    const pageClosed = page?.isClosed() ?? false;
+    const pageAvailable = page !== null && !pageClosed;
+    const contextBrowser = this.context?.browser() ?? null;
+    const browserConnected = this.browser?.isConnected()
+      ?? contextBrowser?.isConnected()
+      ?? pageAvailable;
+    let trustedPage = false;
+    if (pageAvailable && page) {
+      try {
+        trustedPage = isTrustedKcexUrl(page.url());
+      } catch {
+        trustedPage = false;
+      }
+    }
+    return { browserConnected, pageAvailable, pageClosed, trustedPage };
+  }
+
   async close(): Promise<void> {
     if (this.ownsContext) await this.context?.close().catch(() => undefined);
     if (this.ownsBrowser) await this.browser?.close().catch(() => undefined);
@@ -215,7 +235,7 @@ export class KcexAuthAdapter implements AuthAdapter {
     }
 
     const accountMenu = await visibleLocator(page, KCEX_SELECTORS.accountMenu);
-    if (accountMenu || /\b(log\s*out|sign\s*out)\b|退出登录|退出账号/i.test(text)) {
+    if (accountMenu) {
       return "AUTHENTICATED";
     }
 

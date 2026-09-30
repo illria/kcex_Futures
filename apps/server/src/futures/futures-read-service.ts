@@ -7,9 +7,10 @@ import type {
   FuturesReadStatus,
   KcexFuturesSnapshot,
   ReadHealth,
+  SelectorEvidenceField,
 } from "../../../../packages/shared/src/protocol.js";
 import { EventBus } from "../realtime/event-bus.js";
-import type { FuturesReadAdapter, FuturesSnapshotResult } from "./kcex-futures-read-adapter.js";
+import type { FuturesReadAdapter, FuturesReadDiagnostics, FuturesSnapshotResult } from "./kcex-futures-read-adapter.js";
 
 export const FUTURES_READ_POLL_MIN_MS = 2_000;
 export const FUTURES_READ_POLL_MAX_MS = 60_000;
@@ -27,6 +28,7 @@ export interface FuturesReadServiceOptions {
   enabled: boolean;
   pollMs: number;
   now?: () => Date;
+  onRuntimeSignal?: (signal: "SESSION_LOST" | "MANUAL_CHALLENGE") => void | Promise<void>;
 }
 
 export interface FuturesReadState {
@@ -37,10 +39,25 @@ export interface FuturesReadState {
   updatedAt: string;
 }
 
+export interface SelectorDriftObservation {
+  suspected: boolean;
+  consecutiveEvidenceFailures: number;
+  missingFields: SelectorEvidenceField[];
+}
+
+const emptyDiagnostics: FuturesReadDiagnostics = {
+  authenticated: false,
+  trustedPage: false,
+  loginControlsVisible: false,
+  challengeVisible: false,
+  evidence: { symbol: false, market: false, account: false, contract: false, position: false, openOrders: false },
+  missingFields: [],
+};
+
 function readStatusForAuth(status: AuthStatus): FuturesReadStatus {
+  if (status === "SESSION_LOST") return "SESSION_LOST";
   if (status === "MANUAL_CHALLENGE") return "MANUAL_CHALLENGE";
-  if (status === "AUTH_UNKNOWN") return "UNKNOWN";
-  return "SESSION_LOST";
+  return "UNKNOWN";
 }
 
 export class FuturesReadService {
@@ -56,6 +73,10 @@ export class FuturesReadService {
   private lastReadStatus: FuturesReadStatus = "UNKNOWN";
   private lastReadHealth: ReadHealth = "UNKNOWN";
   private lastReadAttemptAt: string;
+  private hasPerformedRead = false;
+  private latestDiagnostics: FuturesReadDiagnostics = emptyDiagnostics;
+  private selectorDrift: SelectorDriftObservation = { suspected: false, consecutiveEvidenceFailures: 0, missingFields: [] };
+  private lastMissingEvidenceKey = "";
 
   constructor(private readonly options: FuturesReadServiceOptions) {
     this.intervalMs = normalizePollInterval(options.pollMs);
@@ -74,6 +95,10 @@ export class FuturesReadService {
     return this.intervalMs;
   }
 
+  get staleAfterMs(): number {
+    return Math.max(15_000, this.intervalMs * 3);
+  }
+
   getBrowserStatus(): BrowserStatus {
     return this.runtimeState;
   }
@@ -88,9 +113,36 @@ export class FuturesReadService {
     };
   }
 
+  getReadDiagnostics(): FuturesReadDiagnostics {
+    return {
+      ...this.latestDiagnostics,
+      evidence: { ...this.latestDiagnostics.evidence },
+      missingFields: [...this.latestDiagnostics.missingFields],
+    };
+  }
+
+  getSelectorDriftObservation(): SelectorDriftObservation {
+    return {
+      suspected: this.selectorDrift.suspected,
+      consecutiveEvidenceFailures: this.selectorDrift.consecutiveEvidenceFailures,
+      missingFields: [...this.selectorDrift.missingFields],
+    };
+  }
+
+  getLastSuccessfulSnapshotUpdatedAt(): string | null {
+    return this.latest?.updatedAt ?? null;
+  }
+
+  getLastReadAttemptAt(): string | null {
+    return this.hasPerformedRead ? this.lastReadAttemptAt : null;
+  }
+
   getLatestSnapshot(now: Date | number | string = this.now()): KcexFuturesSnapshot | null {
     if (!this.latest) return null;
-    return applySnapshotFreshness(this.latest, now, { forceStale: this.forceLatestStale });
+    return applySnapshotFreshness(this.latest, now, {
+      forceStale: this.forceLatestStale,
+      staleAfterMs: this.staleAfterMs,
+    });
   }
 
   start(): void {
@@ -109,7 +161,7 @@ export class FuturesReadService {
 
   stop(status?: FuturesReadStatus): void {
     this.lifecycleGeneration += 1;
-    if (status) this.updateReadState(status, "UNKNOWN", this.now().toISOString());
+    if (status) this.updateReadState(status, "UNKNOWN", this.lastReadAttemptAt);
     const wasRunning = this.timer !== null
       || this.runtimeState === "AUTHENTICATED"
       || this.runtimeState === "READING"
@@ -132,15 +184,18 @@ export class FuturesReadService {
       return null;
     }
     this.pollInProgress = true;
+    this.hasPerformedRead = true;
+    this.lastReadAttemptAt = this.now().toISOString();
     const generation = this.lifecycleGeneration;
     try {
       let adapterResult: FuturesSnapshotResult;
       try {
         adapterResult = await this.options.adapter.readSnapshot();
-      } catch (error) {
+      } catch {
         adapterResult = {
           status: "UNKNOWN",
-          reason: error instanceof Error ? error.message : "Read-only futures read failed.",
+          reason: "Read-only futures read failed.",
+          diagnostics: emptyDiagnostics,
         };
       }
       if (generation !== this.lifecycleGeneration || this.options.authStatus() !== "AUTHENTICATED") return null;
@@ -149,9 +204,11 @@ export class FuturesReadService {
         try {
           assertFuturesSourceConsistency(adapterResult.snapshot);
         } catch {
-          result = { status: "UNKNOWN", reason: "Mixed futures data sources were rejected." };
+          result = { status: "UNKNOWN", reason: "Mixed futures data sources were rejected.", diagnostics: emptyDiagnostics };
         }
       }
+      this.latestDiagnostics = result.diagnostics ?? emptyDiagnostics;
+      this.updateSelectorDrift(result);
       if (result.snapshot) {
         this.latest = result.snapshot;
         this.forceLatestStale = false;
@@ -164,13 +221,12 @@ export class FuturesReadService {
         if (result.status === "UNKNOWN") this.forceLatestStale = this.latest !== null;
       }
       const readHealth = result.snapshot?.health ?? "UNKNOWN";
-      const readStateUpdatedAt = this.now().toISOString();
+      const readStateUpdatedAt = this.lastReadAttemptAt;
       this.updateReadState(result.status, readHealth, readStateUpdatedAt);
-      const trustedHostFailure = /trusted KCEX host|official KCEX host|untrusted/i.test(result.reason ?? "");
       const terminal = result.status === "SESSION_LOST"
         || result.status === "SYMBOL_MISMATCH"
         || result.status === "MANUAL_CHALLENGE"
-        || trustedHostFailure;
+        || this.selectorDrift.suspected;
       if (terminal) {
         this.stop();
       } else if (result.status === "READY") {
@@ -199,6 +255,8 @@ export class FuturesReadService {
         consecutiveReadFailures: this.consecutiveReadFailures,
         fieldCount: result.snapshot ? 5 : 0,
       }, "KCEX futures read-only snapshot updated.");
+      if (result.status === "SESSION_LOST") await this.options.onRuntimeSignal?.("SESSION_LOST");
+      if (result.status === "MANUAL_CHALLENGE") await this.options.onRuntimeSignal?.("MANUAL_CHALLENGE");
       return result;
     } finally {
       this.pollInProgress = false;
@@ -230,5 +288,35 @@ export class FuturesReadService {
     this.lastReadStatus = status;
     this.lastReadHealth = health;
     this.lastReadAttemptAt = updatedAt;
+  }
+
+  private updateSelectorDrift(result: FuturesSnapshotResult): void {
+    const diagnostics = result.diagnostics;
+    const missingFields = diagnostics?.missingFields ?? [];
+    const safeToCount = diagnostics?.authenticated === true
+      && diagnostics.trustedPage === true
+      && diagnostics.loginControlsVisible === false
+      && diagnostics.challengeVisible === false
+      && missingFields.length > 0;
+    if (!safeToCount) {
+      if (missingFields.length === 0 && (result.status === "READY" || result.status === "PARTIAL")) {
+        this.selectorDrift = { suspected: false, consecutiveEvidenceFailures: 0, missingFields: [] };
+      } else if (!this.selectorDrift.suspected) {
+        this.selectorDrift = { suspected: false, consecutiveEvidenceFailures: 0, missingFields: [] };
+      }
+      this.lastMissingEvidenceKey = "";
+      return;
+    }
+    const ordered = [...missingFields].sort();
+    const key = ordered.join(",");
+    const consecutiveEvidenceFailures = key === this.lastMissingEvidenceKey
+      ? this.selectorDrift.consecutiveEvidenceFailures + 1
+      : 1;
+    this.lastMissingEvidenceKey = key;
+    this.selectorDrift = {
+      suspected: this.selectorDrift.suspected || consecutiveEvidenceFailures >= 3,
+      consecutiveEvidenceFailures,
+      missingFields: ordered,
+    };
   }
 }

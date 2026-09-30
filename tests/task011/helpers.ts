@@ -4,6 +4,7 @@ import { EventBus } from "../../apps/server/src/realtime/event-bus.js";
 import { StorageService } from "../../apps/server/src/storage/storage-service.js";
 import type { ExecutionPositionState } from "../../packages/shared/src/execution.js";
 import type { KillSwitchStatus } from "../../packages/shared/src/risk.js";
+import type { ResilienceStatus } from "../../packages/shared/src/protocol.js";
 
 export const TASK011_BASE_TIME = "2026-10-01T00:00:00.000Z";
 
@@ -15,12 +16,14 @@ export interface SchedulerSetupOptions {
   position?: ExecutionPositionState;
   killSwitch?: KillSwitchStatus;
   randomSource?: RandomSource;
+  resilienceStatus?: ResilienceStatus;
 }
 
 export async function createSchedulerSetup(options: SchedulerSetupOptions = {}) {
   let now = new Date(options.startAt ?? TASK011_BASE_TIME);
   let position = options.position ?? "FLAT";
   let killSwitch = options.killSwitch ?? "CLEAR";
+  let resilienceStatus = options.resilienceStatus ?? "IDLE";
   const storage = new StorageService({ databaseFile: ":memory:", now: () => new Date(now) });
   await storage.initialize();
   const events = new EventBus();
@@ -34,6 +37,7 @@ export async function createSchedulerSetup(options: SchedulerSetupOptions = {}) 
     events,
     positionSource: { getPositionState: () => position },
     getKillSwitchStatus: () => killSwitch,
+    getResilienceStatus: () => resilienceStatus,
     now: () => new Date(now),
     randomSource,
     idGenerator: uuidSequence(1100),
@@ -45,6 +49,7 @@ export async function createSchedulerSetup(options: SchedulerSetupOptions = {}) 
     setNow(value: string) { now = new Date(value); },
     setPosition(value: ExecutionPositionState) { position = value; },
     setKillSwitch(value: KillSwitchStatus) { killSwitch = value; },
+    setResilienceStatus(value: ResilienceStatus) { resilienceStatus = value; },
     async cleanup() {
       scheduler.stop();
       storage.close();

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createFakeDashboardSnapshot } from "../../packages/shared/src/fake-snapshot.js";
-import { AuthStateSchema, type DashboardEvent } from "../../packages/shared/src/protocol.js";
+import { AuthStateSchema, ResilienceStateSchema, type DashboardEvent } from "../../packages/shared/src/protocol.js";
 import { EventBus } from "../../apps/server/src/realtime/event-bus.js";
 import { getDashboardBindAddress, getDashboardPort } from "../../apps/server/src/api/http-server.js";
 import { SECRET_REDACTION_PATHS, createAppLogger } from "../../src/logging/logger.js";
@@ -19,6 +19,25 @@ describe("shared WebSocket event schemas", () => {
       updatedAt: timestamp,
     });
     const bus = new EventBus();
+    const resilience = ResilienceStateSchema.parse({
+      status: "IDLE",
+      reasons: [],
+      authStatus: "AUTHENTICATED",
+      browserStatus: "NOT_STARTED",
+      browserHealth: { browserConnected: false, pageAvailable: false, pageClosed: false, trustedPage: false },
+      readStatus: null,
+      readHealth: "UNKNOWN",
+      consecutiveReadFailures: 0,
+      lastReadAttemptAt: null,
+      lastHealthyAt: null,
+      lastRecoveryAt: null,
+      selectorDrift: { suspected: false, consecutiveEvidenceFailures: 0, missingFields: [] },
+      storageStatus: "READY",
+      readStaleAfterMs: 15_000,
+      automaticLogin: false,
+      automaticTrading: false,
+      updatedAt: timestamp,
+    });
     const events: DashboardEvent[] = [
       { version: 1, type: "auth.state", timestamp, payload: auth },
       { version: 1, type: "futures.snapshot", timestamp, payload: snapshot.futures },
@@ -26,8 +45,9 @@ describe("shared WebSocket event schemas", () => {
       { version: 1, type: "account.balance", timestamp, payload: { asset: "USDT", available: 1000, source: "MOCK" } },
       { version: 1, type: "position.changed", timestamp, payload: snapshot.position },
       { version: 1, type: "scheduler.plan", timestamp, payload: snapshot.scheduler },
+      { version: 1, type: "resilience.state", timestamp, payload: resilience },
       { version: 1, type: "system.log", timestamp, payload: snapshot.logs[0] },
-      { version: 1, type: "system.heartbeat", timestamp, payload: { status: "OK", liveTrading: false, uptimeSeconds: 0 } },
+      { version: 1, type: "system.heartbeat", timestamp, payload: { status: "OK", liveTrading: false, uptimeSeconds: 0, resilienceStatus: "IDLE" } },
     ];
 
     expect(events.map((event) => bus.publish(event).type)).toEqual([
@@ -37,6 +57,7 @@ describe("shared WebSocket event schemas", () => {
       "account.balance",
       "position.changed",
       "scheduler.plan",
+      "resilience.state",
       "system.log",
       "system.heartbeat",
     ]);
