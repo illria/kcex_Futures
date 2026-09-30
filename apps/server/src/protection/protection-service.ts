@@ -146,11 +146,11 @@ export class ProtectionService {
     this.assertNotBusy();
     this.assertStorageReady();
     const intent = ProtectionIntentSchema.parse(intentValue);
-    const { attempt, entryPrice, size } = this.loadEligibleAttempt(intent.executionAttemptId);
-    const existing = this.options.storage.protectionPlans.getByAttemptId(attempt.attemptId);
+    const existing = this.options.storage.protectionPlans.getByAttemptId(intent.executionAttemptId);
     if (existing && existing.status !== "ERROR") throw new ProtectionServiceError("PROTECTION_ALREADY_EXISTS");
     const guarded = this.options.storage.protectionPlans.getPositionGuardPlan();
     if (guarded) throw new ProtectionServiceError("PROTECTION_ALREADY_EXISTS");
+    const { attempt, entryPrice, size } = this.loadEligibleAttempt(intent.executionAttemptId);
 
     const now = this.clockNow();
     const preview = ProtectionPreviewSchema.parse({
@@ -220,6 +220,10 @@ export class ProtectionService {
     this.busy = true;
     try {
       this.assertStorageReady();
+      const existing = this.options.storage.protectionPlans.getByAttemptId(stored.intent.executionAttemptId);
+      const guard = this.options.storage.protectionPlans.getPositionGuardPlan();
+      if (guard) throw new ProtectionServiceError("PROTECTION_ALREADY_EXISTS");
+      if (existing && existing.status !== "ERROR") throw new ProtectionServiceError("PROTECTION_ALREADY_EXISTS");
       const { attempt, entryPrice, size } = this.loadEligibleAttempt(stored.intent.executionAttemptId);
       if (attempt.attemptId !== stored.preview.executionAttemptId
         || attempt.side !== stored.preview.side
@@ -228,10 +232,6 @@ export class ProtectionService {
         || attempt.leverage !== stored.preview.leverage) {
         throw new ProtectionServiceError("PREVIEW_INVALID");
       }
-      const existing = this.options.storage.protectionPlans.getByAttemptId(attempt.attemptId);
-      const guard = this.options.storage.protectionPlans.getPositionGuardPlan();
-      if (guard) throw new ProtectionServiceError("PROTECTION_ALREADY_EXISTS");
-      if (existing && existing.status !== "ERROR") throw new ProtectionServiceError("PROTECTION_ALREADY_EXISTS");
 
       const timestamp = this.clockNow().toISOString();
       const planId = existing?.id ?? this.idGenerator();

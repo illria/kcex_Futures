@@ -237,7 +237,7 @@ describe("local credential and fake auth API", () => {
         try {
           const event = parseDashboardEvent(JSON.parse(message.toString()));
           seen.add(event.type);
-          if (seen.size === 10) {
+          if (seen.size === 11) {
             socket.close();
             resolve([...seen].sort());
           }
@@ -255,6 +255,7 @@ describe("local credential and fake auth API", () => {
       "market.snapshot",
       "paper.state",
       "position.changed",
+      "protection.state",
       "risk.state",
       "scheduler.plan",
       "system.heartbeat",
