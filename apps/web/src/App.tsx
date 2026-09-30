@@ -7,11 +7,13 @@ import {
   AuthStateSchema,
   DashboardSnapshotSchema,
   MASTER_KEY_MIN_LENGTH,
+  ResilienceStateSchema,
   parseDashboardEvent,
   type AuthState,
   type DashboardEvent,
   type DashboardSnapshot,
   type KcexFuturesSnapshot,
+  type ResilienceState,
 } from "../../../packages/shared/src/protocol.js";
 import { RiskStateSchema, type RiskState } from "../../../packages/shared/src/risk.js";
 import {
@@ -121,12 +123,13 @@ export function materializeDashboardFuturesForDisplay(
   snapshot: DashboardSnapshot,
   authProvider: AuthState['authProvider'],
   now: Date | number | string = Date.now(),
+  staleAfterMs = 15_000,
 ): KcexFuturesSnapshot {
   const futures = snapshot.futures;
   if (authProvider === "KCEX" && futures.source !== "KCEX") return futures;
   const forceStale = futures.source === "KCEX"
     && (snapshot.status.browser === "STOPPED" || snapshot.status.readHealth === "UNKNOWN");
-  return applySnapshotFreshness(futures, now, { forceStale });
+  return applySnapshotFreshness(futures, now, { forceStale, staleAfterMs });
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -164,6 +167,8 @@ export function DashboardView({
   snapshot,
   auth,
   webSocketConnected,
+  resilience,
+  lastHeartbeatAt,
   onExecutionStateChange,
   protection,
   onProtectionStateChange,
@@ -171,6 +176,8 @@ export function DashboardView({
   snapshot: DashboardSnapshot;
   auth: AuthState;
   webSocketConnected: boolean;
+  resilience?: ResilienceState;
+  lastHeartbeatAt?: number | null;
   onExecutionStateChange?: (state: AssistedExecutionState) => void;
   protection?: ProtectionRuntimeState;
   onProtectionStateChange?: (state: ProtectionRuntimeState) => void;
@@ -181,7 +188,12 @@ export function DashboardView({
     return () => window.clearInterval(timer);
   }, []);
 
-  const futures = materializeDashboardFuturesForDisplay(snapshot, auth.authProvider, now);
+  const futures = materializeDashboardFuturesForDisplay(
+    snapshot,
+    auth.authProvider,
+    now,
+    resilience?.readStaleAfterMs ?? 15_000,
+  );
   const sourceLabel = futures.source === "KCEX" ? "LIVE READ-ONLY" : "FIXTURE";
   const formatNumber = (value: number | null, digits = 5): string => value === null ? "—" : value.toFixed(digits);
   const formatSigned = (value: number | null): string => value === null ? "—" : `${value.toFixed(2)} USDT`;
@@ -228,6 +240,11 @@ export function DashboardView({
       <div className="stream-state" role="status">
         WebSocket: {webSocketConnected ? "CONNECTED" : "DISCONNECTED"} · {sourceLabel} · Provider: {auth.authProvider}
       </div>
+
+      <RuntimeResiliencePanel
+        resilience={resilience ?? createResiliencePlaceholder(auth, snapshot)}
+        lastHeartbeatAt={lastHeartbeatAt ?? null}
+      />
 
       <AssistedExecutionPanel
         execution={snapshot.execution}
@@ -889,6 +906,84 @@ function AssistedExecutionPanel({
   );
 }
 
+function createResiliencePlaceholder(auth: AuthState, snapshot: DashboardSnapshot): ResilienceState {
+  const updatedAt = new Date().toISOString();
+  return ResilienceStateSchema.parse({
+    status: auth.authProvider === "FAKE" ? "IDLE" : "DEGRADED",
+    reasons: [],
+    authStatus: auth.status,
+    browserStatus: snapshot.status.browser,
+    browserHealth: { browserConnected: false, pageAvailable: false, pageClosed: false, trustedPage: false },
+    readStatus: null,
+    readHealth: snapshot.status.readHealth,
+    consecutiveReadFailures: 0,
+    lastReadAttemptAt: null,
+    lastHealthyAt: null,
+    lastRecoveryAt: null,
+    selectorDrift: { suspected: false, consecutiveEvidenceFailures: 0, missingFields: [] },
+    storageStatus: snapshot.status.storage,
+    readStaleAfterMs: 15_000,
+    automaticLogin: false,
+    automaticTrading: false,
+    updatedAt,
+  });
+}
+
+export function RuntimeResiliencePanel({
+  resilience,
+  lastHeartbeatAt,
+}: {
+  resilience: ResilienceState;
+  lastHeartbeatAt: number | null;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const heartbeatAgeSeconds = lastHeartbeatAt === null ? null : Math.max(0, Math.floor((now - lastHeartbeatAt) / 1000));
+  const heartbeatState = heartbeatAgeSeconds === null ? "WAITING" : heartbeatAgeSeconds > 45 ? "STALE" : "FRESH";
+  const warnings: string[] = [];
+  if (resilience.reasons.includes("AUTH_SESSION_LOST")) warnings.push("SESSION LOST — MANUAL LOGIN REQUIRED");
+  if (resilience.reasons.includes("MANUAL_CHALLENGE") || resilience.reasons.includes("OTP_REQUIRED")) {
+    warnings.push("SECURITY CHALLENGE — MANUAL ACTION REQUIRED");
+  }
+  if (resilience.reasons.includes("SELECTOR_DRIFT_SUSPECTED")) {
+    warnings.push("SELECTOR DRIFT SUSPECTED — MANUAL DOM REVIEW REQUIRED");
+  }
+  warnings.push("NO AUTOMATIC LOGIN", "NO CAPTCHA BYPASS", "NO AUTOMATIC KCEX ORDER RECOVERY");
+  return (
+    <section className="panel resilience-panel" aria-label="Runtime Resilience">
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">LONG-RUNNING RECOVERY · OBSERVE ONLY</p>
+          <h2>Runtime Resilience</h2>
+        </div>
+        <span className="source-tag">{resilience.status}</span>
+      </div>
+      <div className="resilience-warnings" role="status">
+        {warnings.map((warning) => <strong key={warning}>{warning}</strong>)}
+      </div>
+      <div className="metric-grid four resilience-metrics">
+        <Metric label="Auth Status" value={resilience.authStatus} />
+        <Metric label="Browser Status" value={resilience.browserStatus} />
+        <Metric label="Read Status / Health" value={`${resilience.readStatus ?? "—"} / ${resilience.readHealth}`} />
+        <Metric label="Consecutive Read Failures" value={String(resilience.consecutiveReadFailures)} />
+        <Metric label="Browser Connection" value={resilience.browserHealth.browserConnected ? "CONNECTED" : "DISCONNECTED"} />
+        <Metric label="Page" value={resilience.browserHealth.pageAvailable ? "AVAILABLE" : "UNAVAILABLE"} />
+        <Metric label="Trusted Host" value={resilience.browserHealth.trustedPage ? "TRUSTED" : "UNVERIFIED"} />
+        <Metric label="Heartbeat" value={`${heartbeatState}${heartbeatAgeSeconds === null ? "" : ` · ${heartbeatAgeSeconds}s`}`} />
+      </div>
+      <p className="muted-note">Reasons: {resilience.reasons.length ? resilience.reasons.join(", ") : "None"}</p>
+      <p className="muted-note">Last read attempt: {resilience.lastReadAttemptAt ?? "—"} · Last healthy: {resilience.lastHealthyAt ?? "—"} · Last recovery check: {resilience.lastRecoveryAt ?? "—"}</p>
+      <p className="muted-note">
+        Selector drift suspected: {resilience.selectorDrift.suspected ? "YES" : "NO"} · Evidence failures: {resilience.selectorDrift.consecutiveEvidenceFailures} · Missing fields: {resilience.selectorDrift.missingFields.length ? resilience.selectorDrift.missingFields.join(", ") : "None"}
+      </p>
+      <p className="safety-note">LIVE_TRADING=false · Automatic login=false · Automatic trading=false · Stale after {resilience.readStaleAfterMs}ms</p>
+    </section>
+  );
+}
+
 function StatusTile({ label, value }: { label: string; value: string }) {
   return (
     <div className="status-tile">
@@ -1222,6 +1317,8 @@ export function AuthPanel({
 export function App() {
   const [auth, setAuth] = useState<AuthState | null>(null);
   const [snapshot, setSnapshot] = useState<DashboardSnapshot>(() => createFakeDashboardSnapshot());
+  const [resilience, setResilience] = useState<ResilienceState | null>(null);
+  const [lastHeartbeatAt, setLastHeartbeatAt] = useState<number | null>(null);
   const [protection, setProtection] = useState<ProtectionRuntimeState>(() => ProtectionRuntimeStateSchema.parse({
     status: "NONE", provider: "FIXTURE", activePreview: null, activePlan: null, lastPlan: null, reasons: [], updatedAt: new Date().toISOString(),
   }));
@@ -1249,6 +1346,9 @@ export function App() {
       .catch(() => {
         if (!disposed) setServiceReady(false);
       });
+    void requestJson<unknown>("/api/v1/resilience/state")
+      .then((value) => { if (!disposed) setResilience(ResilienceStateSchema.parse(value)); })
+      .catch(() => { /* The resilience stream remains UNKNOWN until its first valid event. */ });
     void refreshSnapshot();
     void requestJson<unknown>("/api/v1/protection/state")
       .then((value) => { if (!disposed) setProtection(ProtectionRuntimeStateSchema.parse(value)); })
@@ -1266,6 +1366,8 @@ export function App() {
           setAuth(event.payload);
           if (event.payload.status === "AUTHENTICATED") void refreshSnapshot();
         }
+        if (event.type === "resilience.state") setResilience(event.payload);
+        if (event.type === "system.heartbeat") setLastHeartbeatAt(Date.now());
         if (event.type === "futures.snapshot") {
           setSnapshot((current) => {
             const next = applyFuturesSnapshotToDashboard(current, event.payload);
@@ -1408,7 +1510,16 @@ export function App() {
   }
 
   if (auth.status !== "AUTHENTICATED") {
-    return <AuthPanel auth={auth} onAuthChanged={setAuth} />;
+    return (
+      <>
+        <AuthPanel auth={auth} onAuthChanged={setAuth} />
+        {resilience ? (
+          <main className="dashboard auth-resilience">
+            <RuntimeResiliencePanel resilience={resilience} lastHeartbeatAt={lastHeartbeatAt} />
+          </main>
+        ) : null}
+      </>
+    );
   }
 
   return (
@@ -1416,6 +1527,8 @@ export function App() {
       snapshot={snapshot}
       auth={auth}
       webSocketConnected={webSocketConnected}
+      resilience={resilience ?? undefined}
+      lastHeartbeatAt={lastHeartbeatAt}
       onExecutionStateChange={(execution) => setSnapshot((current) => applyExecutionStateToDashboard(current, execution))}
       protection={protection}
       onProtectionStateChange={setProtection}

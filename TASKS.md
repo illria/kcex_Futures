@@ -93,17 +93,21 @@ Spec: [docs/tasks/TASK-010.md](docs/tasks/TASK-010.md)
 
 Fixture protection only. Real KCEX protective-order mutation remains deferred.
 
-## Review Ready
+## Completed
 
 ### TASK-011 — Daily Random Scheduler
 
-Status: REVIEW READY
+Status: COMPLETE
 
 Spec: [docs/tasks/TASK-011.md](docs/tasks/TASK-011.md)
 
 Scheduler plans and tracks UTC slots only. It does not automatically arm,
 preview, confirm, submit, or manage positions.
 
-## Planned
+## Review Ready
 
 ### TASK-012 — Long-Running Resilience and Recovery
+
+Status: REVIEW READY
+
+Spec: [docs/tasks/TASK-012.md](docs/tasks/TASK-012.md)

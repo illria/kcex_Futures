@@ -23,6 +23,7 @@ export const SchedulerBlockReasonSchema = z.enum([
   "KILL_SWITCH_UNKNOWN",
   "STORAGE_DEGRADED",
   "AMBIGUOUS_EXECUTION_MATCH",
+  "RUNTIME_UNHEALTHY",
 ]);
 export type SchedulerBlockReason = z.infer<typeof SchedulerBlockReasonSchema>;
 

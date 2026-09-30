@@ -29,7 +29,15 @@ export class AuditRepository {
     this.database.prepare(`
       INSERT INTO audit_events(id, category, event_type, severity, message, payload_json, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(id, validated.category, validated.eventType, validated.severity, validated.message, payloadJson, createdAt);
+    `).run(
+      id,
+      validated.category === "RESILIENCE" ? "SYSTEM" : validated.category,
+      validated.eventType,
+      validated.severity,
+      validated.message,
+      payloadJson,
+      createdAt,
+    );
 
     const row = this.database.prepare(`
       SELECT id, category, event_type AS eventType, severity, message, payload_json AS payloadJson, created_at AS createdAt
@@ -111,6 +119,12 @@ function parseAuditEventRow(row: RawRow): AuditEventRecord {
   }
   const record = { ...row };
   delete record.payloadJson;
+  // Schema version 4 predates the RESILIENCE category. Keep its constrained
+  // SQLite table unchanged and expose resilience events through the typed
+  // repository category while storing them in the existing SYSTEM namespace.
+  if (record.category === "SYSTEM" && typeof record.eventType === "string" && record.eventType.startsWith("RESILIENCE_")) {
+    record.category = "RESILIENCE";
+  }
   const parsed = AuditEventRecordSchema.safeParse({ ...record, payload });
   if (!parsed.success) throw new StorageDataIntegrityError("audit event");
   return parsed.data;

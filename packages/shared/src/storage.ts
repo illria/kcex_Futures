@@ -128,7 +128,7 @@ export const UpsertDailyPlanInputSchema = DailyPlanFieldsSchema.omit({ createdAt
   });
 export type UpsertDailyPlanInput = z.infer<typeof UpsertDailyPlanInputSchema>;
 
-export const AuditCategorySchema = z.enum(["STORAGE", "TRADING", "RISK", "SCHEDULER", "SYSTEM"]);
+export const AuditCategorySchema = z.enum(["STORAGE", "TRADING", "RISK", "SCHEDULER", "SYSTEM", "RESILIENCE"]);
 export const AuditSeveritySchema = z.enum(["INFO", "WARN", "ERROR"]);
 
 const forbiddenPayloadKeyParts = [

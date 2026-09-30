@@ -96,6 +96,7 @@ button:disabled { cursor: wait; opacity: .65; }
 .form-error { margin: 16px 0 0; color: #ff9b9b; font-size: .9rem; }
 
 .dashboard { width: min(1240px, 100%); margin: 0 auto; padding: 30px 24px 60px; }
+.auth-resilience { padding-top: 0; }
 .status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; }
 .status-tile, .panel { border: 1px solid var(--panel-border); border-radius: 14px; background: rgba(25, 33, 44, .94); }
 .status-tile { display: grid; gap: 8px; padding: 15px 17px; }
@@ -105,6 +106,10 @@ button:disabled { cursor: wait; opacity: .65; }
 .panel { margin-top: 13px; padding: 20px; }
 .panel-heading { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 18px; }
 .source-tag { padding: 5px 8px; border: 1px solid #345748; border-radius: 99px; color: var(--accent); font-size: .66rem; font-weight: 800; letter-spacing: .08em; }
+.resilience-panel { border-color: #665842; }
+.resilience-warnings { display: grid; gap: 7px; margin: 0 0 17px; padding: 13px 15px; border: 1px solid #806331; border-radius: 10px; background: rgba(114, 83, 24, .18); color: #ffd18a; }
+.resilience-warnings strong { font-size: .78rem; letter-spacing: .035em; }
+.resilience-metrics { margin-bottom: 12px; }
 .assisted-execution-panel { border-color: #6d5633; }
 .execution-warning { display: grid; gap: 5px; margin-bottom: 18px; padding: 14px 16px; border: 1px solid #9a6235; border-radius: 11px; background: rgba(115, 57, 27, .25); color: #ffd7a8; }
 .execution-warning strong { color: #ffb56a; font-size: .9rem; letter-spacing: .08em; }

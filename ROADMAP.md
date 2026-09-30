@@ -90,7 +90,7 @@ post-merge GitHub Actions run passed.
 
 See [docs/tasks/TASK-010.md](docs/tasks/TASK-010.md) for the acceptance criteria.
 
-## Phase 7 — TASK-011: Daily Random Scheduler (review ready)
+## Phase 7 — TASK-011: Daily Random Scheduler (complete)
 
 - create immutable UTC daily plans with deterministic injected random sources
 - enforce a five-minute grid, at least thirty-minute spacing, and a fifteen-minute grace window
@@ -98,11 +98,18 @@ See [docs/tasks/TASK-010.md](docs/tasks/TASK-010.md) for the acceptance criteria
 - track only manual fixture-confirmed entries; a due slot never submits an order
 - expose read-only scheduler state through HTTP, WebSocket, and the Dashboard
 
-## Phase 8 — TASK-012: Long-Running Resilience (planned)
+See [docs/tasks/TASK-011.md](docs/tasks/TASK-011.md) for acceptance details.
 
-- auth-loss and stale-page detection
-- selector drift diagnostics and controlled recovery
-- heartbeat and structured audit logging
+## Phase 8 — TASK-012: Long-Running Resilience (review ready)
+
+- observe authenticated browser, read freshness, storage, and process heartbeat
+- report suspected selector drift after three matching safe observations
+- stop read polling on session loss, challenges, untrusted pages, or runtime integrity failures
+- expose read-only resilience state through HTTP, WebSocket, and the Dashboard
+- block scheduler eligibility while runtime state requires manual action or is halted
+- do not perform automatic login, CAPTCHA bypass, browser relaunch, or KCEX order recovery
+
+See [docs/tasks/TASK-012.md](docs/tasks/TASK-012.md) for acceptance details.
 
 Every phase must pass its documented CI acceptance criteria before later work
 begins.

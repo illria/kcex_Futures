@@ -75,6 +75,46 @@ export type FuturesReadStatus = z.infer<typeof FuturesReadStatusSchema>;
 export const BrowserStatusSchema = z.enum(["NOT_STARTED", "AUTHENTICATED", "READING", "DEGRADED", "STOPPED"]);
 export type BrowserStatus = z.infer<typeof BrowserStatusSchema>;
 
+export const ResilienceStatusSchema = z.enum(["IDLE", "HEALTHY", "DEGRADED", "MANUAL_ACTION", "HALTED"]);
+export type ResilienceStatus = z.infer<typeof ResilienceStatusSchema>;
+
+export const ResilienceReasonCodeSchema = z.enum([
+  "AUTH_SESSION_LOST",
+  "AUTH_UNKNOWN",
+  "OTP_REQUIRED",
+  "MANUAL_CHALLENGE",
+  "READ_STALE",
+  "READ_FAILURE",
+  "READ_FAILURE_LIMIT",
+  "SELECTOR_DRIFT_SUSPECTED",
+  "BROWSER_DISCONNECTED",
+  "PAGE_UNAVAILABLE",
+  "UNTRUSTED_HOST",
+  "STORAGE_DEGRADED",
+  "SYMBOL_MISMATCH",
+]);
+export type ResilienceReasonCode = z.infer<typeof ResilienceReasonCodeSchema>;
+
+export const SelectorEvidenceFieldSchema = z.enum([
+  "symbol",
+  "lastPrice",
+  "markPrice",
+  "availableUsdt",
+  "marginMode",
+  "leverage",
+  "positionEvidence",
+  "openOrdersEvidence",
+]);
+export type SelectorEvidenceField = z.infer<typeof SelectorEvidenceFieldSchema>;
+
+export const BrowserHealthInspectionSchema = z.object({
+  browserConnected: z.boolean(),
+  pageAvailable: z.boolean(),
+  pageClosed: z.boolean(),
+  trustedPage: z.boolean(),
+}).strict();
+export type BrowserHealthInspection = z.infer<typeof BrowserHealthInspectionSchema>;
+
 export const MarginModeSchema = z.enum(["ISOLATED", "CROSS", "UNKNOWN"]);
 export const PositionSideSchema = z.enum(["LONG", "SHORT", "NONE", "UNKNOWN"]);
 export const OrderSideSchema = z.enum(["LONG", "SHORT", "UNKNOWN"]);
@@ -82,6 +122,31 @@ export const OrderTypeSchema = z.enum(["LIMIT", "MARKET", "TRIGGER", "TP", "SL",
 
 const nullableFiniteNonnegative = z.number().finite().nonnegative().nullable();
 const timestamp = z.string().min(1);
+
+export const ResilienceStateSchema = z.object({
+  status: ResilienceStatusSchema,
+  reasons: z.array(ResilienceReasonCodeSchema).max(8),
+  authStatus: AuthStatusSchema,
+  browserStatus: BrowserStatusSchema,
+  browserHealth: BrowserHealthInspectionSchema,
+  readStatus: FuturesReadStatusSchema.nullable(),
+  readHealth: ReadHealthSchema,
+  consecutiveReadFailures: z.number().int().nonnegative(),
+  lastReadAttemptAt: timestamp.nullable(),
+  lastHealthyAt: timestamp.nullable(),
+  lastRecoveryAt: timestamp.nullable(),
+  selectorDrift: z.object({
+    suspected: z.boolean(),
+    consecutiveEvidenceFailures: z.number().int().nonnegative(),
+    missingFields: z.array(SelectorEvidenceFieldSchema).max(8),
+  }).strict(),
+  storageStatus: StorageStatusSchema,
+  readStaleAfterMs: z.number().int().min(15_000).max(180_000),
+  automaticLogin: z.literal(false),
+  automaticTrading: z.literal(false),
+  updatedAt: timestamp,
+}).strict();
+export type ResilienceState = z.infer<typeof ResilienceStateSchema>;
 
 export const MarketSnapshotSchema = z
   .object({
@@ -285,6 +350,7 @@ export const DashboardEventSchema = z.discriminatedUnion("type", [
       updatedAt: timestamp,
     }).strict(),
   }).strict(),
+  z.object({ ...EventMetaSchema, type: z.literal("resilience.state"), payload: ResilienceStateSchema }).strict(),
   z.object({ ...EventMetaSchema, type: z.literal("scheduler.plan"), payload: SchedulerStateSchema }).strict(),
   z.object({ ...EventMetaSchema, type: z.literal("paper.state"), payload: PaperTradingStateSchema }).strict(),
   z.object({ ...EventMetaSchema, type: z.literal("risk.state"), payload: RiskStateSchema }).strict(),
@@ -315,7 +381,12 @@ export const DashboardEventSchema = z.discriminatedUnion("type", [
   z.object({
     ...EventMetaSchema,
     type: z.literal("system.heartbeat"),
-    payload: z.object({ status: z.literal("OK"), liveTrading: z.literal(false), uptimeSeconds: z.number().int().nonnegative() }).strict(),
+    payload: z.object({
+      status: z.literal("OK"),
+      liveTrading: z.literal(false),
+      uptimeSeconds: z.number().int().nonnegative(),
+      resilienceStatus: ResilienceStatusSchema,
+    }).strict(),
   }).strict(),
 ]);
 export type DashboardEvent = z.infer<typeof DashboardEventSchema>;

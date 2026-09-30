@@ -165,6 +165,9 @@ Fixture TP/SL Protection Management
 TASK-011
 Daily Random Scheduler
         ↓
+TASK-012
+Long-Running Resilience and Recovery
+        ↓
 后续任务（尚未实现）
 ```
 
@@ -256,7 +259,13 @@ Kill Switch 只阻止新 Paper entry；已有 Paper position 仍可 mark、close
 
 TASK-011 生成并持久化 UTC 每日随机计划：每天 1–10 个 GPS_USDT LONG/SHORT slot，按五分钟网格分布，任意相邻 slot 至少间隔 30 分钟。到达计划时间后只显示 DUE；错过 15 分钟窗口会记录 MISSED。重启读取原计划，不重新随机化，也不补做过期 slot。
 
-Scheduler 只计划、提醒并跟踪人工确认的 fixture entry。它不会自动 Arm、Preview、Confirm、提交订单、平仓或触发 TP/SL。Dashboard 显示 `SCHEDULE ONLY — NO AUTOMATIC ORDER SUBMISSION`，且 `LIVE_TRADING=false`。真实 KCEX mutation 仍关闭。详见 [docs/tasks/TASK-011.md](docs/tasks/TASK-011.md)。
+Scheduler 只计划、提醒并跟踪人工确认的 fixture entry。它不会自动 Arm、Preview、Confirm、提交订单、平仓或触发 TP/SL。Dashboard 显示 `SCHEDULE ONLY — NO AUTOMATIC ORDER SUBMISSION`，且 `LIVE_TRADING=false`。TASK-011 已完成。详见 [docs/tasks/TASK-011.md](docs/tasks/TASK-011.md)。
+
+## TASK-012 Long-Running Resilience and Recovery
+
+TASK-012 增加只观察的运行韧性状态，跟踪认证、浏览器连接、只读数据新鲜度、连续读取失败、selector evidence 漂移、存储健康和进程 heartbeat。状态通过只读 API、WebSocket 和 Dashboard 展示；连续三次相同的缺失 selector evidence 会标记为 `SELECTOR_DRIFT_SUSPECTED` 并停止读取，等待人工检查。
+
+该状态服务不执行自动登录、OTP 提交、验证码绕过、浏览器重启、selector 自动修复或 KCEX 订单恢复。异常时 scheduler 将 due slot 标记为不可执行，但不会改写计划时间。`LIVE_TRADING=false` 保持强制关闭。真实 KCEX 页面和 selector 检查仍为 **DEFERRED MANUAL VERIFICATION**。详见 [docs/tasks/TASK-012.md](docs/tasks/TASK-012.md)。
 
 ## 推荐技术栈
 

@@ -1,4 +1,4 @@
-import type { AuthProvider } from "../../../../packages/shared/src/protocol.js";
+import type { AuthProvider, BrowserHealthInspection } from "../../../../packages/shared/src/protocol.js";
 
 export interface AuthCredentials {
   readonly account: string;
@@ -24,5 +24,6 @@ export interface AuthAdapter {
   checkSession(): Promise<AuthAdapterResult>;
   restoreSession?(storageState: unknown): Promise<AuthAdapterResult>;
   exportSession?(): Promise<unknown>;
+  inspectBrowserHealth?(): BrowserHealthInspection;
   close?(): Promise<void> | void;
 }

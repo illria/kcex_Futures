@@ -23,6 +23,7 @@ import { ProtectionService } from "./protection/protection-service.js";
 import { DailySchedulerService } from "./scheduler/daily-scheduler-service.js";
 import { logger } from "../../../src/logging/logger.js";
 import { loadConfig } from "../../../src/config/schema.js";
+import { RuntimeResilienceService } from "./resilience/runtime-resilience-service.js";
 
 async function startServer(): Promise<void> {
   const config = loadConfig();
@@ -96,14 +97,14 @@ async function startServer(): Promise<void> {
     setPositionState: (state) => executionPositionSource.setPositionState(state),
   });
   await protection.recover();
+  let resilience: RuntimeResilienceService | undefined;
   const scheduler = new DailySchedulerService({
     storage,
     events,
     positionSource: executionPositionSource,
     getKillSwitchStatus: () => killSwitch.getStatus(),
+    getResilienceStatus: () => resilience?.getState().status ?? "IDLE",
   });
-  await scheduler.recover();
-  scheduler.start();
   const adapter = config.AUTH_PROVIDER === "KCEX"
     ? new KcexAuthAdapter({ baseUrl: config.KCEX_BASE_URL, headless: config.BROWSER_HEADLESS })
     : new FakeAuthAdapter();
@@ -116,6 +117,7 @@ async function startServer(): Promise<void> {
         authStatus: () => auth.getState().status,
         enabled: config.KCEX_READONLY_ENABLED,
         pollMs: config.KCEX_READ_POLL_MS,
+        onRuntimeSignal: async (signal) => { await auth.handleRuntimeSignal(signal); },
       })
     : undefined;
   const unsubscribeAuthEvents = futuresRead
@@ -126,10 +128,23 @@ async function startServer(): Promise<void> {
           if (event.payload.status === "AUTHENTICATED") readService.start();
           else if (event.payload.status === "AUTH_UNKNOWN") readService.stop("UNKNOWN");
           else if (event.payload.status === "MANUAL_CHALLENGE") readService.stop("MANUAL_CHALLENGE");
-          else readService.stop("SESSION_LOST");
+          else if (event.payload.status === "SESSION_LOST") readService.stop("SESSION_LOST");
+          else readService.stop();
         });
       })()
     : undefined;
+  resilience = new RuntimeResilienceService({
+    auth,
+    futuresRead,
+    storage,
+    events,
+    logger,
+    onStateChange: async () => { await scheduler.tick(); },
+  });
+  await resilience.recover();
+  await scheduler.recover();
+  scheduler.start();
+  resilience.start();
   const server = createDashboardServer({
     auth,
     vault,
@@ -143,6 +158,7 @@ async function startServer(): Promise<void> {
     execution,
     protection,
     scheduler,
+    resilience,
   });
 
   const heartbeat = setInterval(() => {
@@ -155,6 +171,7 @@ async function startServer(): Promise<void> {
         status: "OK",
         liveTrading: false,
         uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
+        resilienceStatus: resilience?.getState().status ?? "IDLE",
       },
     });
   }, 15_000);
@@ -166,6 +183,7 @@ async function startServer(): Promise<void> {
     shuttingDown = true;
     clearInterval(heartbeat);
     scheduler.stop();
+    resilience?.stop();
     execution.close();
     unsubscribeAuthEvents?.();
     void (async () => {
