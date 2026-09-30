@@ -184,6 +184,7 @@ describe("TASK-012 long-running resilience state", () => {
   });
 
   it("turns AUTH_UNKNOWN and the read failure limit into bounded DEGRADED reasons", async () => {
+    let now = new Date(nowIso);
     const storage = await memoryStorage();
     const authUnknown = new RuntimeResilienceService({
       auth: authStub("AUTH_UNKNOWN"), futuresRead: readService({ status: "UNKNOWN" }), storage, events: new EventBus(),
@@ -196,12 +197,13 @@ describe("TASK-012 long-running resilience state", () => {
     const resilience = new RuntimeResilienceService({
       auth: authStub(), futuresRead: reader, storage, events: new EventBus(),
       logger: { info: () => undefined, warn: () => undefined } as unknown as Logger,
-      now: () => new Date(nowIso),
+      now: () => new Date(now),
     });
     await reader.pollOnce();
     expect((await resilience.recover()).reasons).toContain("READ_FAILURE");
     await reader.pollOnce();
     await reader.pollOnce();
+    now = new Date(now.getTime() + 1_000);
     expect((await resilience.recover()).reasons).toContain("READ_FAILURE_LIMIT");
   });
 
@@ -307,7 +309,10 @@ describe("TASK-012 long-running resilience state", () => {
     });
     await resilience.recover();
     await resilience.recover();
-    expect(storage.auditEvents.listAuditEvents({ limit: 10 }).filter((event) => event.category === "RESILIENCE")).toHaveLength(1);
+    const auditEvents = storage.auditEvents.listAuditEvents({ limit: 10 }).filter((event) => event.category === "RESILIENCE");
+    expect(auditEvents).toHaveLength(1);
+    expect(auditEvents[0]?.payload).toHaveProperty("reasons");
+    expect(auditEvents[0]?.payload).not.toHaveProperty("reasonCodes");
     expect(SCHEMA_VERSION).toBe(4);
   });
 

@@ -299,7 +299,7 @@ export class RuntimeResilienceService {
         message: "Runtime resilience state changed.",
         payload: {
           currentStatus: next.status,
-          reasonCodes: next.reasons,
+          reasons: next.reasons,
           browserStatus: next.browserStatus,
           readStatus: next.readStatus,
           readHealth: next.readHealth,
