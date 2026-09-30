@@ -81,7 +81,7 @@ See [docs/tasks/TASK-009.md](docs/tasks/TASK-009.md) for the acceptance criteria
 TASK-009 was merged to main at `02d761dd5bd3714921b23d75972aa40884f1d0d2`; its
 post-merge GitHub Actions run passed.
 
-## Phase 6 — TASK-010: TP/SL Management (in progress)
+## Phase 6 — TASK-010: TP/SL Management (review ready)
 
 - fixture-only protection lifecycle bound to the latest confirmed, OPEN position
 - distinguish `PRICE_PCT` from fixture leveraged `ROI_PCT` approximation

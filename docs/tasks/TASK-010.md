@@ -2,7 +2,7 @@
 
 ## Status and boundary
 
-Status: IN PROGRESS
+Status: REVIEW READY
 
 This task implements fixture-only protection planning, activation, persistence,
 restart recovery, and explicit fixture mark-trigger simulation. The protection

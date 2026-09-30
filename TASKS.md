@@ -87,7 +87,7 @@ Merged to main at `02d761dd5bd3714921b23d75972aa40884f1d0d2`; post-merge GitHub 
 
 ### TASK-010 — TP/SL Management
 
-Status: IN PROGRESS
+Status: REVIEW READY
 
 Spec: [docs/tasks/TASK-010.md](docs/tasks/TASK-010.md)
 
