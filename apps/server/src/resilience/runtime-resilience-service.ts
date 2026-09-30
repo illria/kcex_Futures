@@ -243,7 +243,10 @@ export class RuntimeResilienceService {
       }
     }
 
-    if ((status === "HALTED" || status === "MANUAL_ACTION") && read
+    const shouldStopRead = status === "HALTED"
+      || status === "MANUAL_ACTION"
+      || reasons.includes("READ_FAILURE_LIMIT");
+    if (shouldStopRead && read
       && read.getBrowserStatus() !== "STOPPED" && read.getBrowserStatus() !== "NOT_STARTED") {
       read.stop();
     }

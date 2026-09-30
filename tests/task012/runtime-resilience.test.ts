@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import type { Logger } from "pino";
 import WebSocket from "ws";
 import type { AddressInfo } from "node:net";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthService } from "../../apps/server/src/auth/auth-service.js";
 import { FakeAuthAdapter } from "../../apps/server/src/auth/fake-auth-adapter.js";
 import { createDashboardServer } from "../../apps/server/src/api/http-server.js";
@@ -40,7 +40,19 @@ const cleanups: Array<() => Promise<void> | void> = [];
 
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) await cleanup();
+  vi.useRealTimers();
 });
+
+function nextReadHealth(events: EventBus): Promise<void> {
+  return new Promise((resolve) => {
+    let unsubscribe: () => void = () => undefined;
+    unsubscribe = events.subscribe((event) => {
+      if (event.type !== "futures.read-health") return;
+      unsubscribe();
+      resolve();
+    });
+  });
+}
 
 async function memoryStorage(now: () => Date = () => new Date(nowIso)): Promise<StorageService> {
   const storage = new StorageService({ databaseFile: ":memory:", now });
@@ -205,7 +217,125 @@ describe("TASK-012 long-running resilience state", () => {
     await reader.pollOnce();
     expect(reader.getReadState().consecutiveReadFailures).toBe(3);
     now = new Date(now.getTime() + 2_000);
-    expect((await resilience.recover()).reasons).toContain("READ_FAILURE_LIMIT");
+    const state = await resilience.recover();
+    expect(state.status).toBe("DEGRADED");
+    expect(state.reasons).toContain("READ_FAILURE_LIMIT");
+    expect(reader.getBrowserStatus()).toBe("STOPPED");
+  });
+
+  it("stops polling at the third failure and resumes only after an authenticated event", async () => {
+    let now = new Date(nowIso);
+    const storage = await memoryStorage(() => new Date(now));
+    vi.useFakeTimers();
+    const events = new EventBus();
+    let adapterCalls = 0;
+    let authState = AuthStateSchema.parse({
+      status: "AUTHENTICATED",
+      authProvider: "KCEX",
+      credentialsSaved: false,
+      liveTrading: false,
+      updatedAt: now.toISOString(),
+    });
+    const auth = {
+      getState: () => authState,
+      inspectBrowserHealth: () => healthyBrowser,
+    } as unknown as AuthServiceType;
+    const reader = new FuturesReadService({
+      adapter: {
+        readSnapshot: async () => {
+          adapterCalls += 1;
+          if (adapterCalls <= 3) return { status: "UNKNOWN", reason: "insufficient evidence" };
+          return {
+            status: "READY",
+            snapshot: kcexSnapshot(now.toISOString()),
+            diagnostics: noMissingEvidence,
+          };
+        },
+      },
+      events,
+      logger: { info: () => undefined, warn: () => undefined } as unknown as Logger,
+      authStatus: () => authState.status,
+      enabled: true,
+      pollMs: 2_000,
+      now: () => new Date(now),
+    });
+    const resilience = new RuntimeResilienceService({
+      auth,
+      futuresRead: reader,
+      storage,
+      events,
+      logger: { info: () => undefined, warn: () => undefined } as unknown as Logger,
+      now: () => new Date(now),
+    });
+    const publishAuthState = (status: AuthState["status"]): void => {
+      authState = AuthStateSchema.parse({
+        ...authState,
+        status,
+        updatedAt: now.toISOString(),
+      });
+      events.publish({ version: 1, type: "auth.state", timestamp: now.toISOString(), payload: authState });
+    };
+    const unsubscribeAuth = events.subscribe((event) => {
+      if (event.type !== "auth.state") return;
+      if (event.payload.status === "AUTHENTICATED") reader.start();
+      else if (event.payload.status === "AUTH_UNKNOWN") reader.stop("UNKNOWN");
+      else if (event.payload.status === "MANUAL_CHALLENGE") reader.stop("MANUAL_CHALLENGE");
+      else if (event.payload.status === "SESSION_LOST") reader.stop("SESSION_LOST");
+      else reader.stop();
+    });
+    cleanups.push(() => {
+      unsubscribeAuth();
+      reader.stop();
+      resilience.stop();
+    });
+
+    const firstRead = nextReadHealth(events);
+    reader.start();
+    await firstRead;
+    expect(adapterCalls).toBe(1);
+    expect(reader.getBrowserStatus()).toBe("DEGRADED");
+    expect((await resilience.recover()).reasons).toContain("READ_FAILURE");
+
+    now = new Date(now.getTime() + reader.pollIntervalMs);
+    const secondRead = nextReadHealth(events);
+    await vi.advanceTimersByTimeAsync(reader.pollIntervalMs);
+    await secondRead;
+    expect(adapterCalls).toBe(2);
+    expect(reader.getBrowserStatus()).toBe("DEGRADED");
+    expect((await resilience.recover()).reasons).toContain("READ_FAILURE");
+
+    now = new Date(now.getTime() + reader.pollIntervalMs);
+    const thirdRead = nextReadHealth(events);
+    await vi.advanceTimersByTimeAsync(reader.pollIntervalMs);
+    await thirdRead;
+    expect(adapterCalls).toBe(3);
+    expect(reader.getReadState().consecutiveReadFailures).toBe(3);
+
+    const limited = await resilience.recover();
+    expect(limited.status).toBe("DEGRADED");
+    expect(limited.reasons).toContain("READ_FAILURE_LIMIT");
+    expect(reader.getBrowserStatus()).toBe("STOPPED");
+    expect(adapterCalls).toBe(3);
+
+    now = new Date(now.getTime() + reader.pollIntervalMs);
+    await resilience.recover();
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(reader.getBrowserStatus()).toBe("STOPPED");
+    expect(adapterCalls).toBe(3);
+
+    now = new Date(now.getTime() + 20_000);
+    publishAuthState("SESSION_CHECK");
+    const resumedRead = nextReadHealth(events);
+    publishAuthState("AUTHENTICATED");
+    await resumedRead;
+    expect(adapterCalls).toBe(4);
+    expect(reader.getReadState().consecutiveReadFailures).toBe(0);
+    expect(reader.getBrowserStatus()).toBe("READING");
+
+    const recovered = await resilience.recover();
+    expect(recovered.status).toBe("HEALTHY");
+    expect(recovered.reasons).not.toContain("READ_FAILURE_LIMIT");
+    expect(recovered.consecutiveReadFailures).toBe(0);
   });
 
   it.each([
