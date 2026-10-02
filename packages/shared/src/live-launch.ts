@@ -360,6 +360,9 @@ export function getLiveAutomationBlockReasons(input: {
 const emptySelectors = Object.fromEntries(
   KcexSelectorKeySchema.options.map((key) => [key, { selector: null, status: "UNVERIFIED" }]),
 ) as KcexLiveSelectorManifest;
+const emptyChecks = Object.fromEntries(
+  KcexVerificationCheckKeySchema.options.map((key) => [key, "NOT_RUN"]),
+) as Record<KcexVerificationCheckKey, KcexVerificationStatus>;
 
 export const EMPTY_KCEX_VERIFICATION_REPORT: KcexVerificationReport = KcexVerificationReportSchema.parse({
   schemaVersion: 1,
@@ -387,5 +390,5 @@ export const EMPTY_KCEX_VERIFICATION_REPORT: KcexVerificationReport = KcexVerifi
     maximumNotionalDeviationBps: 0,
     verifiedAt: null,
   },
-  checks: {},
+  checks: emptyChecks,
 });

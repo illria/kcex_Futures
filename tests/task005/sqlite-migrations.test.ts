@@ -58,7 +58,7 @@ describe("SQLite schema migrations", () => {
     databases.push(database);
     database.exec(`
       CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL);
-      INSERT INTO schema_migrations(version, name, applied_at) VALUES (5, 'future', '2026-01-01T00:00:00.000Z');
+      INSERT INTO schema_migrations(version, name, applied_at) VALUES (${SCHEMA_VERSION + 1}, 'future', '2026-01-01T00:00:00.000Z');
     `);
 
     expect(() => new MigrationRunner(database).run()).toThrow(DatabaseSchemaTooNewError);

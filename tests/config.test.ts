@@ -28,7 +28,7 @@ describe("Task 001 configuration", () => {
   it("requires provider and explicit platform authorization before LIVE_TRADING=true", () => {
     expect(() => loadConfig({ LIVE_TRADING: "true" }, () => undefined)).toThrow();
     expect(() => loadConfig({ LIVE_TRADING: "true", LIVE_EXECUTION_PROVIDER: "KCEX" }, () => undefined)).toThrow();
-    expect(() => loadConfig({
+    expect(loadConfig({
       LIVE_TRADING: "true",
       AUTH_PROVIDER: "KCEX",
       LIVE_EXECUTION_PROVIDER: "KCEX",
