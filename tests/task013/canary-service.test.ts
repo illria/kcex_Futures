@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { KcexCanaryService } from "../../apps/server/src/kcex-live/kcex-canary-service.js";
 import { EventBus } from "../../apps/server/src/realtime/event-bus.js";
-import { createMemoryStorage } from "../task005/storage-test-helpers.js";
+import { createMemoryStorage, plannedTradeInput } from "../task005/storage-test-helpers.js";
 import { LIVE_CANARY_CONFIRMATION_PHRASE } from "../../packages/shared/src/live-launch.js";
 import { verifiedProfile } from "./helpers.js";
 
@@ -73,6 +73,17 @@ describe("TASK-013 isolated one-time Canary", () => {
         executeOnce: async (_input, attemptId) => {
           storage.liveExecutionAttempts.markSubmitted({ attemptId, quantity: 5, notionalUsdt: 100 });
           storage.liveExecutionAttempts.markConfirming(attemptId);
+          storage.trades.createTrade(plannedTradeInput({
+            id: "22222222-2222-4222-8222-222222222222",
+            mode: "LIVE",
+            side: "LONG",
+            status: "OPEN",
+            marginUsdt: 10,
+            leverage: 10,
+            quantity: 5,
+            entryPrice: 2,
+            openedAt: "2026-10-01T00:00:01.000Z",
+          }));
           storage.liveExecutionAttempts.markConfirmed({
             attemptId,
             entryPrice: 2,

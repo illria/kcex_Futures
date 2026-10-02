@@ -42,8 +42,7 @@ export function verifiedProfile(overrides: Partial<VerifiedKcexContractProfile> 
 
 export function passingVerificationReport(): KcexVerificationReport {
   const checks = Object.fromEntries(KcexVerificationCheckKeySchema.options
-    .filter((key) => !key.startsWith("canary"))
-    .map((key) => [key, "PASS"]));
+    .map((key) => [key, key.startsWith("canary") ? "NOT_RUN" : "PASS"]));
   return KcexVerificationReportSchema.parse({
     ...EMPTY_KCEX_VERIFICATION_REPORT,
     status: "PASS",

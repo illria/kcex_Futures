@@ -161,7 +161,9 @@ export const KcexVerificationReportSchema = z.object({
       }
     }
     for (const [key, status] of Object.entries(report.checks)) {
-      if (status !== "PASS") context.addIssue({ code: "custom", path: ["checks", key], message: "A passing report cannot contain a nonpassing check." });
+      if (status !== "PASS" && !(key.startsWith("canary") && status === "NOT_RUN")) {
+        context.addIssue({ code: "custom", path: ["checks", key], message: "A passing report cannot contain a nonpassing check." });
+      }
     }
     for (const [key, selector] of Object.entries(report.selectors)) {
       if (selector.status !== "VERIFIED" || !selector.selector) {

@@ -35,7 +35,7 @@ describe("TASK-013 launch gates and verification protocol", () => {
     const report = passingVerificationReport();
     expect(report.status).toBe("PASS");
     expect(report.canaryStatus).toBe("NOT_RUN");
-    expect(report.checks.canaryEntry).toBeUndefined();
+    expect(report.checks.canaryEntry).toBe("NOT_RUN");
     expect(KcexVerificationReportSchema.safeParse({ ...report, account: "user@example.invalid" }).success).toBe(false);
     expect(KcexVerificationReportSchema.safeParse({
       ...report,
