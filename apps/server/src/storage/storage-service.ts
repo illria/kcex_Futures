@@ -10,6 +10,8 @@ import { DailyPlanRepository } from "./daily-plan-repository.js";
 import { ExecutionAttemptRepository } from "./execution-attempt-repository.js";
 import { ProtectionPlanRepository } from "./protection-plan-repository.js";
 import { SchedulerRepository } from "./scheduler-repository.js";
+import { LiveExecutionAttemptRepository } from "./live-execution-attempt-repository.js";
+import { LiveProtectionPlanRepository } from "./live-protection-plan-repository.js";
 import { SQLiteDatabase } from "./sqlite-database.js";
 import { DatabaseSchemaTooNewError, StorageInitializationError } from "./storage-errors.js";
 import { TradeRepository } from "./trade-repository.js";
@@ -33,6 +35,8 @@ export class StorageService {
   private executionAttemptsRepository: ExecutionAttemptRepository | null = null;
   private protectionPlansRepository: ProtectionPlanRepository | null = null;
   private schedulerRepository: SchedulerRepository | null = null;
+  private liveExecutionAttemptsRepository: LiveExecutionAttemptRepository | null = null;
+  private liveProtectionPlansRepository: LiveProtectionPlanRepository | null = null;
 
   constructor(options: StorageServiceOptions = {}) {
     this.database = new SQLiteDatabase({ fileName: options.databaseFile });
@@ -74,6 +78,16 @@ export class StorageService {
     return this.schedulerRepository!;
   }
 
+  get liveExecutionAttempts(): LiveExecutionAttemptRepository {
+    this.assertReady();
+    return this.liveExecutionAttemptsRepository!;
+  }
+
+  get liveProtectionPlans(): LiveProtectionPlanRepository {
+    this.assertReady();
+    return this.liveProtectionPlansRepository!;
+  }
+
   async initialize(): Promise<void> {
     if (this.isReady) return;
     if (this.closed) throw new StorageInitializationError();
@@ -86,6 +100,8 @@ export class StorageService {
       this.executionAttemptsRepository = new ExecutionAttemptRepository(connection, this.auditEventsRepository, this.now);
       this.protectionPlansRepository = new ProtectionPlanRepository(connection, this.auditEventsRepository, this.now);
       this.schedulerRepository = new SchedulerRepository(connection, this.auditEventsRepository, this.now);
+      this.liveExecutionAttemptsRepository = new LiveExecutionAttemptRepository(connection, this.now);
+      this.liveProtectionPlansRepository = new LiveProtectionPlanRepository(connection, this.now);
       this.initialized = true;
       this.logger?.info({ schemaVersion }, "Trading storage ready.");
     } catch (error) {
@@ -148,6 +164,8 @@ export class StorageService {
     this.executionAttemptsRepository = null;
     this.protectionPlansRepository = null;
     this.schedulerRepository = null;
+    this.liveExecutionAttemptsRepository = null;
+    this.liveProtectionPlansRepository = null;
     this.database.close();
   }
 
@@ -175,5 +193,12 @@ const REQUIRED_STORAGE_PROBES = [
     FROM protection_plans LIMIT 0`,
   "SELECT id, protection_id, event_type, event_time, payload_json, created_at FROM protection_events LIMIT 0",
   `SELECT id, date_key, slot_index, symbol, side, due_at, status, execution_attempt_id,
-    completed_at, missed_at, miss_reason, created_at, updated_at, version FROM scheduler_slots LIMIT 0`,
+    live_execution_attempt_id, completed_at, missed_at, miss_reason, created_at, updated_at, version FROM scheduler_slots LIMIT 0`,
+  `SELECT attempt_id, attempt_type, date_key, slot_index, symbol, side, margin_usdt, leverage, status, quantity, notional_usdt,
+    submitted_at, confirmation_started_at, confirmed_at, failed_at, unknown_at, failure_reason,
+    observed_entry_price, observed_size, observed_at, trade_id, created_at, updated_at, version
+    FROM live_execution_attempts LIMIT 0`,
+  `SELECT id, execution_attempt_id, symbol, side, entry_price, position_size, leverage, tp_basis, tp_value, tp_target,
+    sl_basis, sl_value, sl_target, status, created_at, activated_at, updated_at, version
+    FROM live_protection_plans LIMIT 0`,
 ] as const;

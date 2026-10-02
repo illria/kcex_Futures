@@ -24,6 +24,14 @@
 
 > 重要：本项目采用浏览器自动化，而不是 KCEX 官方公开交易 API。只有在账户、地区、平台规则和 KCEX 授权允许的前提下才能启用真实交易。
 
+## TASK-013 上线门槛
+
+TASK-013 把真实登录、只读页面验证、contract profile、受控 Canary 和 Auto Live 放在同一个审核阶段。当前代码默认 `LIVE_TRADING=false`、`LIVE_EXECUTION_PROVIDER=DISABLED`、`KCEX_AUTOMATION_AUTHORIZED=false`、`KCEX_READONLY_ENABLED=false`。启用自动调度必须依次完成人工只读验证和一次由用户本人启动的 Canary；进程重启后 Auto Live 永远回到 `DISARMED`。
+
+GitHub Actions 只访问本地 loopback fixture，并使用 `AUTH_PROVIDER=FAKE`；不会保存或使用真实凭据。代码和 CI 通过只能标记为 **CODE REVIEW READY**，不代表已连接真实 KCEX、真实验证通过或已达到上线条件。人工验证与 Canary 仍需用户单独完成。
+
+详细门槛见 [TASK-013](docs/tasks/TASK-013.md)、[KCEX Verification](docs/KCEX_VERIFICATION.md) 和 [Live Launch Checklist](docs/LIVE_LAUNCH_CHECKLIST.md)。
+
 ## 登录设计
 
 不再依赖“打开浏览器后人工在 KCEX 页面完成全部登录”。
@@ -168,7 +176,10 @@ Daily Random Scheduler
 TASK-012
 Long-Running Resilience and Recovery
         ↓
-后续任务（尚未实现）
+TASK-013
+KCEX End-to-End Real Trading Launch
+CODE REVIEW READY
+(真实只读验证与 Canary 仍待用户执行)
 ```
 
 任何阶段未验收，不进入下一阶段。

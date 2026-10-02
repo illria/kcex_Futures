@@ -25,14 +25,14 @@ describe("TASK-011 SQLite v3 to v4 migration", () => {
       `).run(protectionId, attemptId, timestamp, timestamp);
 
       expect(new MigrationRunner(database).run()).toBe(SCHEMA_VERSION);
-      expect(SCHEMA_VERSION).toBe(4);
+      expect(SCHEMA_VERSION).toBe(5);
       expect(database.prepare("SELECT status FROM trades WHERE id = ?").get(tradeId)).toEqual({ status: "OPEN" });
       expect(database.prepare("SELECT status FROM execution_attempts WHERE attempt_id = ?").get(attemptId))
         .toEqual({ status: "SUBMITTING" });
       expect(database.prepare("SELECT status FROM protection_plans WHERE id = ?").get(protectionId))
         .toEqual({ status: "UNKNOWN" });
       expect(database.prepare("SELECT id FROM scheduler_slots LIMIT 0").all()).toEqual([]);
-      expect(database.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: 4 });
+      expect(database.prepare("SELECT MAX(version) AS version FROM schema_migrations").get()).toEqual({ version: 5 });
     } finally {
       database.close();
     }

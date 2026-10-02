@@ -27,6 +27,7 @@ const environmentSchema = z.object({
   BROWSER_PROFILE_DIR: z.string().trim().min(1).default("./data/browser-profile"),
   LIVE_TRADING: z.enum(["true", "false"]).default("false"),
   LIVE_EXECUTION_PROVIDER: ExecutionProviderSchema.default("DISABLED"),
+  KCEX_AUTOMATION_AUTHORIZED: z.enum(["true", "false"]).default("false"),
   KCEX_READONLY_ENABLED: z.enum(["true", "false"]).default("false"),
   KCEX_READ_POLL_MS: z.coerce.number().int().min(2_000).max(60_000).default(5_000),
   PAPER_FEE_RATE: z.coerce.number().finite().min(0).max(0.01).default(0),
@@ -44,8 +45,9 @@ export interface AppConfig {
   AUTH_PROVIDER: "FAKE" | "KCEX";
   BROWSER_HEADLESS: boolean;
   BROWSER_PROFILE_DIR: string;
-  LIVE_TRADING: false;
+  LIVE_TRADING: boolean;
   LIVE_EXECUTION_PROVIDER: ExecutionProvider;
+  KCEX_AUTOMATION_AUTHORIZED: boolean;
   KCEX_READONLY_ENABLED: boolean;
   KCEX_READ_POLL_MS: number;
   PAPER_FEE_RATE: number;
@@ -55,7 +57,7 @@ export interface AppConfig {
 
 export function loadConfig(
   environment: NodeJS.ProcessEnv = process.env,
-  warn: (message: string) => void = (message) => process.stderr.write(message + "\n"),
+  _warn: (message: string) => void = (message) => process.stderr.write(message + "\n"),
 ): AppConfig {
   const parsed = environmentSchema.parse(environment);
   const baseUrl = parsed.KCEX_BASE_URL ?? "https://www.kcex.com";
@@ -66,8 +68,15 @@ export function loadConfig(
     throw new Error("KCEX_BASE_URL must be exactly https://www.kcex.com when AUTH_PROVIDER=KCEX.");
   }
 
-  if (parsed.LIVE_TRADING === "true") {
-    warn("LIVE_TRADING=true was ignored; Task 001 always forces LIVE_TRADING=false.");
+  const liveTrading = parsed.LIVE_TRADING === "true";
+  const automationAuthorized = parsed.KCEX_AUTOMATION_AUTHORIZED === "true";
+  if (liveTrading && (
+    !automationAuthorized
+    || parsed.LIVE_EXECUTION_PROVIDER !== "KCEX"
+    || parsed.AUTH_PROVIDER !== "KCEX"
+    || !isTrustedKcexBaseUrl(baseUrl)
+  )) {
+    throw new Error("LIVE_TRADING=true requires KCEX_AUTOMATION_AUTHORIZED=true, KCEX providers, and the trusted KCEX origin.");
   }
 
   return {
@@ -76,8 +85,9 @@ export function loadConfig(
     AUTH_PROVIDER: parsed.AUTH_PROVIDER,
     BROWSER_HEADLESS: parsed.BROWSER_HEADLESS === "true",
     BROWSER_PROFILE_DIR: parsed.BROWSER_PROFILE_DIR,
-    LIVE_TRADING: false,
+    LIVE_TRADING: liveTrading,
     LIVE_EXECUTION_PROVIDER: parsed.LIVE_EXECUTION_PROVIDER,
+    KCEX_AUTOMATION_AUTHORIZED: automationAuthorized,
     KCEX_READONLY_ENABLED: parsed.KCEX_READONLY_ENABLED === "true",
     KCEX_READ_POLL_MS: parsed.KCEX_READ_POLL_MS,
     PAPER_FEE_RATE: parsed.PAPER_FEE_RATE,

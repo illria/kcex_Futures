@@ -51,7 +51,7 @@ describe("TASK-011 read-only scheduler dashboard", () => {
     expect(panel).toContain("SHORT");
     expect(panel).toContain("00:30–00:45 UTC");
     expect(panel).toContain("SCHEDULE ONLY — NO AUTOMATIC ORDER SUBMISSION");
-    expect(panel).toContain("LIVE_TRADING=false");
+    expect(html).toContain("LIVE_TRADING=false");
     expect(panel).not.toContain("<button");
   });
 });

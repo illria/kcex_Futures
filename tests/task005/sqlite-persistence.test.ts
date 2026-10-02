@@ -40,7 +40,7 @@ describe("SQLite file lifecycle", () => {
     const reopened = new StorageService({ databaseFile: fileName });
     opened.push(reopened);
     await reopened.initialize();
-    expect(reopened.getSchemaVersion()).toBe(4);
+    expect(reopened.getSchemaVersion()).toBe(5);
     expect(reopened.trades.getTrade(trade.id)).toEqual(trade);
     expect(reopened.getRecentTradeHistory()).toHaveLength(1);
 

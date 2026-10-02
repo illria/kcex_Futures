@@ -73,7 +73,7 @@ describe("read-only storage APIs and dashboard history", () => {
     const healthResponse = await fetch(`${url}/api/v1/storage/health`);
     expect(healthResponse.status).toBe(200);
     const health = StorageHealthSchema.parse(await healthResponse.json());
-    expect(health).toEqual({ status: "READY", schemaVersion: 4 });
+    expect(health).toEqual({ status: "READY", schemaVersion: 5 });
     expect(Object.keys(health)).toEqual(["status", "schemaVersion"]);
 
     const dashboard = await (await fetch(`${url}/api/v1/dashboard/snapshot`)).json() as {

@@ -100,7 +100,7 @@ See [docs/tasks/TASK-010.md](docs/tasks/TASK-010.md) for the acceptance criteria
 
 See [docs/tasks/TASK-011.md](docs/tasks/TASK-011.md) for acceptance details.
 
-## Phase 8 — TASK-012: Long-Running Resilience (review ready)
+## Phase 8 — TASK-012: Long-Running Resilience (complete)
 
 - observe authenticated browser, read freshness, storage, and process heartbeat
 - report suspected selector drift after three matching safe observations
@@ -110,6 +110,19 @@ See [docs/tasks/TASK-011.md](docs/tasks/TASK-011.md) for acceptance details.
 - do not perform automatic login, CAPTCHA bypass, browser relaunch, or KCEX order recovery
 
 See [docs/tasks/TASK-012.md](docs/tasks/TASK-012.md) for acceptance details.
+
+## Phase 9 — TASK-013: KCEX End-to-End Real Trading Launch (review ready)
+
+- complete Password + Email OTP and manual Google OAuth paths using KCEX-only encrypted session state
+- add a local read-only verification report and verified contract/selector gates
+- isolate the only real entry and protection writers under `apps/server/src/kcex-live/`
+- require a single explicit user Canary before the runtime-only Auto Live arm can pass
+- keep Auto Live disarmed on every process start, use no catch-up, and halt on UNKNOWN or manual-action states
+- run unit, migration, dashboard, and loopback browser fixture validation only in GitHub Actions
+
+Code and green CI reach **CODE REVIEW READY** only. Real KCEX read verification and the user-started one-time Canary remain separate acceptance gates; they are not run by the coding agent.
+
+See [docs/tasks/TASK-013.md](docs/tasks/TASK-013.md), [docs/KCEX_VERIFICATION.md](docs/KCEX_VERIFICATION.md), and [docs/LIVE_LAUNCH_CHECKLIST.md](docs/LIVE_LAUNCH_CHECKLIST.md).
 
 Every phase must pass its documented CI acceptance criteria before later work
 begins.

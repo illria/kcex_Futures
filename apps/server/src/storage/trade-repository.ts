@@ -164,6 +164,18 @@ export class TradeRepository {
     return rows.map(parseTradeRow);
   }
 
+  listOpenLiveTrades(options: { symbol: "GPS_USDT"; limit?: number }): TradeRecord[] {
+    const limit = parseLimit(options.limit, 2, 2);
+    const rows = this.database.prepare(`
+      SELECT ${TRADE_COLUMNS}
+      FROM trades
+      WHERE mode = 'LIVE' AND symbol = ? AND status = 'OPEN'
+      ORDER BY opened_at ASC, id ASC
+      LIMIT ?
+    `).all(options.symbol, limit) as unknown as RawRow[];
+    return rows.map(parseTradeRow);
+  }
+
   countOpenedTrades(input: { mode: "PAPER" | "LIVE"; symbol: string; startAt: string; endAt: string }): number {
     const query = DailyTradeQuerySchema.parse(input);
     const row = this.database.prepare(`

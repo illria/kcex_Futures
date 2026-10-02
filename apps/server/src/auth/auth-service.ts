@@ -123,6 +123,23 @@ export class AuthService {
     return this.snapshot();
   }
 
+  async startGoogleOAuth(): Promise<AuthState> {
+    if (!this.vault.isUnlocked || this.adapter.provider !== "KCEX" || !this.adapter.startGoogleOAuth) {
+      this.transition("AUTH_UNKNOWN");
+      return this.snapshot();
+    }
+    this.clearPendingOtp();
+    this.transition("LOGGING_IN");
+    try {
+      const result = await this.adapter.startGoogleOAuth();
+      if (result === "GOOGLE_OAUTH_PENDING") this.transition("GOOGLE_OAUTH_PENDING");
+      else await this.applyAdapterResult(result);
+    } catch {
+      this.transition("AUTH_UNKNOWN");
+    }
+    return this.snapshot();
+  }
+
   async submitOtp(candidate: Buffer): Promise<AuthState> {
     const pending = this.pendingOtp;
     if (!pending || pending.expiresAt <= this.now() || this.status !== "OTP_REQUIRED") {
@@ -220,7 +237,7 @@ export class AuthService {
   }
 
   private async persistSessionIfAvailable(): Promise<void> {
-    if (!this.sessionStore || !this.vault.credentialsSaved || !this.adapter.exportSession) return;
+    if (!this.sessionStore || !this.adapter.exportSession) return;
     try {
       await this.sessionStore.save(await this.adapter.exportSession());
     } catch {
