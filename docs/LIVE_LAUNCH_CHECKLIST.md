@@ -56,7 +56,7 @@ This checklist is an acceptance record, not an authorization to trade. Complete 
 
 ## Current status
 
-- Code review: pending GitHub Actions and human review
+- Code review: GitHub Actions PASS; human PR review pending
 - Manual KCEX verification: NOT RUN
 - Canary: NOT RUN
 - Launch: NOT READY
