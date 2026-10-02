@@ -45,6 +45,10 @@ describe("TASK-013 launch gates and verification protocol", () => {
       ...report,
       selectors: { ...report.selectors, accountMarker: { selector: "account@example.invalid", status: "VERIFIED" } },
     }).success).toBe(false);
+    expect(KcexVerificationReportSchema.safeParse({
+      ...report,
+      contractProfile: { ...report.contractProfile, quantityStep: 0.005, quantityPrecision: 2 },
+    }).success).toBe(false);
   });
 
   it("requires explicit report confirmation and reserves Canary status for the Canary flow", () => {

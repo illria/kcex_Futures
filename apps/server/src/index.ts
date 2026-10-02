@@ -262,6 +262,10 @@ async function startServer(): Promise<void> {
         contractProfile: verificationReport.contractProfile,
         isRuntimeAuthorized: input.isRuntimeAuthorized,
         getBlockReasons: input.getBlockReasons,
+        refreshPreflight: async () => {
+          await refreshLivePreflight(input.side, input.marginUsdt);
+          await input.refreshBlockReasons?.();
+        },
       });
       const result = await entryWriter.submit({
         attemptId: input.attemptId,

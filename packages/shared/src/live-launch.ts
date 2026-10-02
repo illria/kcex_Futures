@@ -122,6 +122,16 @@ export const VerifiedKcexContractProfileSchema = z.object({
   maximumNotionalDeviationBps: z.number().int().min(0).max(100),
   verifiedAt: z.string().datetime().nullable(),
 }).strict().superRefine((profile, context) => {
+  const representableAtPrecision = (value: number): boolean => {
+    const represented = Number(value.toFixed(profile.quantityPrecision));
+    const tolerance = Number.EPSILON * Math.max(1, Math.abs(value)) * 4;
+    return Math.abs(represented - value) <= tolerance;
+  };
+  if (![profile.quantityStep, profile.minQuantity, profile.maxQuantity]
+    .filter((value): value is number => value !== null)
+    .every(representableAtPrecision)) {
+    context.addIssue({ code: "custom", path: ["quantityPrecision"], message: "Quantity step and limits must be representable at the verified quantity precision." });
+  }
   if (profile.quantityUnit === "CONTRACT" && profile.contractSize === null) {
     context.addIssue({ code: "custom", path: ["contractSize"], message: "Contract size is required for contract-denominated input." });
   }

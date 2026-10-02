@@ -28,9 +28,20 @@ export function deriveKcexQuantity(input: {
       : markPrice * (profile.contractSize ?? Number.NaN);
   if (!Number.isFinite(unitNotional) || unitNotional <= 0) throw new Error("CONTRACT_PROFILE_INVALID");
 
+  const precisionTolerance = (value: number) => Number.EPSILON * Math.max(1, Math.abs(value)) * 4;
+  const representableStep = Number(profile.quantityStep.toFixed(profile.quantityPrecision));
+  if (Math.abs(representableStep - profile.quantityStep) > precisionTolerance(profile.quantityStep)) {
+    throw new Error("QUANTITY_PRECISION_EXCEEDED");
+  }
+
   const rawQuantity = targetNotional / unitNotional;
   const stepCount = Math.floor((rawQuantity + Number.EPSILON * Math.max(1, rawQuantity)) / profile.quantityStep);
-  const quantity = Number((stepCount * profile.quantityStep).toFixed(profile.quantityPrecision));
+  if (!Number.isSafeInteger(stepCount)) throw new Error("QUANTITY_PRECISION_EXCEEDED");
+  const stepQuantity = stepCount * profile.quantityStep;
+  const quantity = Number(stepQuantity.toFixed(profile.quantityPrecision));
+  if (Math.abs(quantity - stepQuantity) > precisionTolerance(stepQuantity)) {
+    throw new Error("QUANTITY_PRECISION_EXCEEDED");
+  }
   if (!Number.isFinite(quantity) || quantity < profile.minQuantity || quantity <= 0) {
     throw new Error("MINIMUM_QUANTITY_NOT_MET");
   }

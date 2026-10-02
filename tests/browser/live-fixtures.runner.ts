@@ -204,6 +204,24 @@ async function main(): Promise<void> {
     assert.equal(await page.locator("#leverage").innerText(), "10x");
     assert.match(await page.locator("#order-summary").innerText(), /^LONG quantity: 250\.0$/);
 
+    let refreshedBlockReasons: string[] = [];
+    const lastMomentBlockedAdapter = new KcexExecutionAdapter({
+      pageSource: source,
+      selectors,
+      contractProfile: makeProfile(),
+      isRuntimeAuthorized: () => true,
+      getBlockReasons: () => refreshedBlockReasons,
+      refreshPreflight: async () => { refreshedBlockReasons = ["KILL_SWITCH_ACTIVE"]; },
+    });
+    const blockedAtSubmit = await lastMomentBlockedAdapter.submit({
+      attemptId: "12121212-1212-4212-8212-121212121212",
+      side: "LONG",
+      dueAt: "2026-10-01T00:00:00.000Z",
+      marginUsdt: 50,
+    });
+    assert.equal(blockedAtSubmit.status, "FAILED_NOT_SUBMITTED", "a Kill Switch raised at the final pre-submit refresh blocks the order");
+    assert.equal(await page.locator("#submit").getAttribute("data-submit-count"), "1");
+
     const duplicate = await adapter.submit({
       attemptId: "11111111-1111-4111-8111-111111111111",
       side: "LONG",
@@ -439,7 +457,7 @@ async function main(): Promise<void> {
     assert.equal(plannedProtections, 2);
 
     assert.deepEqual(unexpectedOutbound, [], "the browser fixture must not make any non-loopback request");
-    process.stdout.write("TASK-013 live adapter browser fixtures passed: LONG/SHORT, verified margin/leverage semantics, quantity, wrong symbol, open position, missing submit, untrusted host, submit timeout, TP/SL, partial protection ambiguity, duplicate prevention, loopback-only network.\n");
+    process.stdout.write("TASK-013 live adapter browser fixtures passed: LONG/SHORT, verified margin/leverage semantics, quantity, final Kill Switch refresh, wrong symbol, open position, missing submit, untrusted host, submit timeout, TP/SL, partial protection ambiguity, duplicate prevention, loopback-only network.\n");
   } finally {
     await context.close();
     await browser.close();

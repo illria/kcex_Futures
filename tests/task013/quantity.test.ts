@@ -45,5 +45,11 @@ describe("TASK-013 verified contract sizing", () => {
       marginUsdt: 50,
       leverage: 10,
     })).toThrow("QUANTITY_STEP_DEVIATION_EXCEEDED");
+    expect(() => deriveKcexQuantity({
+      profile: verifiedProfile({ quantityStep: 0.005, quantityPrecision: 2 }),
+      markPrice: 2,
+      marginUsdt: 50,
+      leverage: 10,
+    })).toThrow("QUANTITY_PRECISION_EXCEEDED");
   });
 });

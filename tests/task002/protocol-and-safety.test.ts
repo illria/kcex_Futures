@@ -93,13 +93,26 @@ describe("logger redaction", () => {
       "session-id-value-task002",
       "storage-state-value-task002",
       "storage-state-snake-value-task002",
+      "csrf-value-task002",
+      "csrf-token-value-task002",
+      "x-csrf-token-value-task002",
+      "google-account-value-task002",
+      "google-email-value-task002",
+      "google-password-value-task002",
     ];
 
     logger.info({
       password: secrets[0],
       credentials: { masterKey: secrets[1], nested: { secret: secrets[2] } },
       request: { body: { otp: secrets[3], verificationCode: secrets[4] } },
-      headers: { cookie: secrets[5], authorization: secrets[6] },
+      headers: { cookie: secrets[5], authorization: secrets[6], "x-csrf-token": secrets[16] },
+      csrf: secrets[14],
+      csrfToken: secrets[15],
+      googleOAuth: {
+        googleAccount: secrets[17],
+        googleEmail: secrets[18],
+        googlePassword: secrets[19],
+      },
       context: {
         token: secrets[7],
         accessToken: secrets[8],
@@ -127,6 +140,13 @@ describe("logger redaction", () => {
       "sessionId",
       "storageState",
       "storage_state",
+      "csrf",
+      "csrfToken",
+      "csrf_token",
+      "googleAccount",
+      "googleEmail",
+      "googlePassword",
+      "headers",
     ]) {
       expect(SECRET_REDACTION_PATHS).toContain(field);
     }

@@ -43,6 +43,7 @@ export interface KcexExecutionAdapterOptions {
   contractProfile: VerifiedKcexContractProfile;
   isRuntimeAuthorized(): boolean;
   getBlockReasons(): readonly string[];
+  refreshPreflight?(): Promise<void>;
   now?: () => Date;
 }
 
@@ -195,6 +196,16 @@ export class KcexExecutionAdapter {
           || !finalEvidence.summaryMatches
           || !this.assertAutomationReady()
         ) {
+          return { status: "FAILED_NOT_SUBMITTED", reason: "PRECHECK_FAILED" } as const;
+        }
+
+        // Refresh disk-backed Kill Switch and RiskEngine state at the final
+        // submit boundary, after the final DOM evidence check and immediately
+        // before the single click. Canary callers refresh their complete gate
+        // list through the same callback.
+        await this.options.refreshPreflight?.();
+        assertTrustedKcexUrl(page.url());
+        if (!this.assertAutomationReady()) {
           return { status: "FAILED_NOT_SUBMITTED", reason: "PRECHECK_FAILED" } as const;
         }
 

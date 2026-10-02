@@ -228,6 +228,9 @@ describe("KcexAuthAdapter result handling", () => {
         ],
         origins: [
           { origin: "https://www.kcex.com", localStorage: [{ name: "kcex-state", value: "fixture-kcex-local-state" }] },
+          { origin: "http://www.kcex.com", localStorage: [{ name: "insecure-state", value: "fixture-insecure-state" }] },
+          { origin: "https://www.kcex.com:8443", localStorage: [{ name: "ported-state", value: "fixture-ported-state" }] },
+          { origin: "https://evil.www.kcex.com", localStorage: [{ name: "subdomain-state", value: "fixture-subdomain-state" }] },
           { origin: "https://accounts.google.com", localStorage: [{ name: "google-state", value: "fixture-google-local-state" }] },
         ],
       }),
@@ -239,5 +242,8 @@ describe("KcexAuthAdapter result handling", () => {
       origins: [{ origin: "https://www.kcex.com" }],
     });
     expect(JSON.stringify(exported)).not.toContain("google");
+    expect(JSON.stringify(exported)).not.toContain("fixture-insecure-state");
+    expect(JSON.stringify(exported)).not.toContain("fixture-ported-state");
+    expect(JSON.stringify(exported)).not.toContain("fixture-subdomain-state");
   });
 });

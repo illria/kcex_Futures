@@ -206,7 +206,7 @@ export class KcexAuthAdapter implements AuthAdapter {
       : [];
     const origins = Array.isArray(storageState.origins)
       ? storageState.origins.filter((entry) => {
-          try { return new URL(entry.origin).hostname.toLowerCase() === "www.kcex.com"; }
+          try { return new URL(entry.origin).origin === "https://www.kcex.com"; }
           catch { return false; }
         })
       : [];
