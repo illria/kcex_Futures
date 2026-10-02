@@ -176,7 +176,10 @@ Daily Random Scheduler
 TASK-012
 Long-Running Resilience and Recovery
         ↓
-后续任务（尚未实现）
+TASK-013
+KCEX End-to-End Real Trading Launch
+CODE REVIEW READY
+(真实只读验证与 Canary 仍待用户执行)
 ```
 
 任何阶段未验收，不进入下一阶段。

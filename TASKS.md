@@ -112,10 +112,10 @@ Status: COMPLETE
 
 Spec: [docs/tasks/TASK-012.md](docs/tasks/TASK-012.md)
 
-## In Progress
+## Review Ready
 
 ### TASK-013 — KCEX End-to-End Real Trading Launch
 
-Status: IN PROGRESS
+Status: REVIEW READY
 
 Spec: [docs/tasks/TASK-013.md](docs/tasks/TASK-013.md)

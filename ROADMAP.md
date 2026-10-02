@@ -111,7 +111,7 @@ See [docs/tasks/TASK-011.md](docs/tasks/TASK-011.md) for acceptance details.
 
 See [docs/tasks/TASK-012.md](docs/tasks/TASK-012.md) for acceptance details.
 
-## Phase 9 — TASK-013: KCEX End-to-End Real Trading Launch (in progress)
+## Phase 9 — TASK-013: KCEX End-to-End Real Trading Launch (review ready)
 
 - complete Password + Email OTP and manual Google OAuth paths using KCEX-only encrypted session state
 - add a local read-only verification report and verified contract/selector gates
