@@ -14,7 +14,8 @@ The code stage must stop at **CODE REVIEW READY**. A green fixture CI run is not
 - Google OAuth is opened from the trusted KCEX origin. The user completes Google password, 2FA, and any challenge in the browser. The adapter never reads or fills Google credentials.
 - Exported browser state is filtered to the exact `www.kcex.com` origin and encrypted by the existing session store.
 - Session restore is read-only. Every process restart creates Auto Live as `DISARMED`.
-- CAPTCHA, security challenges, OTP-required state, session loss, and insufficient evidence stop live automation and require a user action. There is no auto-login or challenge bypass.
+- CAPTCHA, security challenges, OTP-required state, session loss, and insufficient evidence remain fail-closed. After a conclusive `SESSION_LOST`, password mode may perform exactly one in-memory, single-flight Vault credential login for that loss episode; an `OTP_REQUIRED` result pauses for the user-supplied Email OTP. Google mode never reads Vault credentials and instead requires manual Google OAuth. Challenges, unknown auth, mutation-in-flight loss, and repeated loss stop recovery without retry or bypass, and no recovery state or armed state is persisted across restart.
+- If loss occurs during `SUBMITTING`, `CONFIRMING`, or `PROTECTING`, the active execution/protection record is moved to `UNKNOWN` where applicable and Auto Live is halted. No order or TP/SL mutation is resubmitted; recovery can only perform read-only reconciliation.
 
 ## Read-only verification and report
 

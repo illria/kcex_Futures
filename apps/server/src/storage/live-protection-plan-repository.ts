@@ -70,7 +70,6 @@ export class LiveProtectionPlanRepository {
     const current = this.getById(id);
     if (!current || !(["PLANNED", "ACTIVE", "UNKNOWN", "ERROR"].includes(current.status))) throw new SchedulerSlotConflictError();
     if (status === "ACTIVE" && current.status !== "PLANNED") throw new SchedulerSlotConflictError();
-    if ((status === "UNKNOWN" || status === "ERROR") && current.status === "ACTIVE") throw new SchedulerSlotConflictError();
     if (status === "CLOSED_UNKNOWN" && !["ACTIVE", "UNKNOWN", "ERROR"].includes(current.status)) throw new SchedulerSlotConflictError();
     const timestamp = this.timestamp();
     const changed = this.database.prepare(`UPDATE live_protection_plans SET status = ?,

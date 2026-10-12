@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { z } from "zod";
+import { AuthMethodSchema, type AuthMethod } from "../../../../packages/shared/src/protocol.js";
 import {
   EncryptedCredentialVault,
   type EncryptedSessionEnvelope,
@@ -19,6 +20,7 @@ const SessionEnvelopeSchema = z
   .strict();
 
 type StorageStateOperation<T> = (storageState: unknown) => T | Promise<T>;
+type SessionOperation<T> = (storageState: unknown, authMethod: AuthMethod | null) => T | Promise<T>;
 
 function clearSensitiveValue(value: unknown): void {
   if (Array.isArray(value)) {
@@ -37,6 +39,15 @@ function clearSensitiveValue(value: unknown): void {
 
 function isStorageState(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function sessionPayload(value: unknown): { storageState: Record<string, unknown>; authMethod: AuthMethod | null } {
+  if (isStorageState(value) && "storageState" in value && isStorageState(value.storageState)) {
+    const parsedMethod = AuthMethodSchema.safeParse(value.authMethod);
+    return { storageState: value.storageState, authMethod: parsedMethod.success ? parsedMethod.data : null };
+  }
+  if (!isStorageState(value)) throw new Error("Invalid browser storage state.");
+  return { storageState: value, authMethod: null };
 }
 
 /**
@@ -58,14 +69,14 @@ export class EncryptedSessionStore {
     }
   }
 
-  async save(storageState: unknown): Promise<void> {
+  async save(storageState: unknown, authMethod?: AuthMethod): Promise<void> {
     if (!isStorageState(storageState)) throw new Error("Invalid browser storage state.");
     if (!this.vault.isUnlocked) throw new VaultLockedError();
 
     let serialized = "";
     let plaintext: Buffer | null = null;
     try {
-      const encoded = JSON.stringify(storageState);
+      const encoded = JSON.stringify(authMethod ? { storageState, authMethod } : storageState);
       if (!encoded) throw new Error("Invalid browser storage state.");
       serialized = encoded;
       plaintext = Buffer.from(serialized, "utf8");
@@ -81,6 +92,10 @@ export class EncryptedSessionStore {
   }
 
   async withStorageState<T>(operation: StorageStateOperation<T>): Promise<T> {
+    return this.withSession((storageState) => operation(storageState));
+  }
+
+  async withSession<T>(operation: SessionOperation<T>): Promise<T> {
     if (!this.vault.isUnlocked) throw new VaultLockedError();
     const envelope = await this.readEnvelope();
     return this.vault.withDecryptedSession(envelope, async (plaintext) => {
@@ -88,9 +103,9 @@ export class EncryptedSessionStore {
       let storageState: unknown;
       try {
         serialized = plaintext.toString("utf8");
-        storageState = JSON.parse(serialized);
-        if (!isStorageState(storageState)) throw new Error("Invalid browser storage state.");
-        return await operation(storageState);
+        const payload = sessionPayload(JSON.parse(serialized));
+        storageState = payload.storageState;
+        return await operation(payload.storageState, payload.authMethod);
       } finally {
         serialized = "";
         clearSensitiveValue(storageState);

@@ -27,6 +27,9 @@ export const MASTER_KEY_MIN_LENGTH = 12;
 export const AuthProviderSchema = z.enum(["FAKE", "KCEX"]);
 export type AuthProvider = z.infer<typeof AuthProviderSchema>;
 
+export const AuthMethodSchema = z.enum(["PASSWORD", "GOOGLE", "SESSION", "UNKNOWN"]);
+export type AuthMethod = z.infer<typeof AuthMethodSchema>;
+
 export const AuthStatusSchema = z.enum([
   "APP_LOCKED",
   "VAULT_UNLOCKED",
@@ -48,12 +51,33 @@ export const AuthStateSchema = z
   .object({
     status: AuthStatusSchema,
     authProvider: AuthProviderSchema,
+    authMethod: AuthMethodSchema.optional(),
     credentialsSaved: z.boolean(),
     liveTrading: z.literal(false),
     updatedAt: z.string().min(1),
   })
   .strict();
 export type AuthState = z.infer<typeof AuthStateSchema>;
+
+export const AuthRecoveryStatusSchema = z.enum([
+  "IDLE",
+  "RECOVERING",
+  "WAITING_OTP",
+  "GOOGLE_OAUTH_REQUIRED",
+  "RECOVERED",
+  "MANUAL_ACTION",
+]);
+export type AuthRecoveryStatus = z.infer<typeof AuthRecoveryStatusSchema>;
+
+export const AuthRecoveryStateSchema = z.object({
+  status: AuthRecoveryStatusSchema,
+  attemptCount: z.number().int().min(0).max(1),
+  maxAttempts: z.literal(1),
+  resumeIntent: z.boolean(),
+  reason: z.string().trim().min(1).max(64).nullable(),
+  updatedAt: z.string().min(1),
+}).strict();
+export type AuthRecoveryState = z.infer<typeof AuthRecoveryStateSchema>;
 
 export const DataSourceSchema = z.enum(["MOCK", "KCEX"]);
 export type DataSource = z.infer<typeof DataSourceSchema>;
@@ -333,6 +357,7 @@ const AccountBalanceEventPayloadSchema = z
 
 export const DashboardEventSchema = z.discriminatedUnion("type", [
   z.object({ ...EventMetaSchema, type: z.literal("auth.state"), payload: AuthStateSchema }).strict(),
+  z.object({ ...EventMetaSchema, type: z.literal("auth.recovery.state"), payload: AuthRecoveryStateSchema }).strict(),
   z.object({ ...EventMetaSchema, type: z.literal("futures.snapshot"), payload: KcexFuturesSnapshotSchema }).strict(),
   z.object({ ...EventMetaSchema, type: z.literal("market.snapshot"), payload: MarketSnapshotSchema }).strict(),
   z.object({ ...EventMetaSchema, type: z.literal("account.balance"), payload: AccountBalanceEventPayloadSchema }).strict(),

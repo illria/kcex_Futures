@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { AuthService } from "./auth/auth-service.js";
+import { AuthRecoveryController } from "./auth/auth-recovery-controller.js";
 import { FakeAuthAdapter } from "./auth/fake-auth-adapter.js";
 import { KcexAuthAdapter } from "./auth/kcex-auth-adapter.js";
 import { createDashboardServer, getDashboardBindAddress, getDashboardPort, resolveStaticRoot } from "./api/http-server.js";
@@ -137,7 +138,6 @@ async function startServer(): Promise<void> {
         pollMs: config.KCEX_READ_POLL_MS,
         onRuntimeSignal: async (signal) => {
           await auth.handleRuntimeSignal(signal);
-          autoLive?.requireManualAction();
         },
       })
     : undefined;
@@ -163,7 +163,7 @@ async function startServer(): Promise<void> {
         if (event.type !== "auth.state") return;
         if (event.payload.status === "AUTHENTICATED") futuresRead.start();
         else {
-          if (event.payload.status === "AUTH_UNKNOWN" || event.payload.status === "SESSION_LOST"
+          if (event.payload.status === "AUTH_UNKNOWN"
             || event.payload.status === "MANUAL_CHALLENGE" || event.payload.status === "OTP_REQUIRED") {
             autoLive?.requireManualAction();
           }
@@ -437,6 +437,62 @@ async function startServer(): Promise<void> {
     },
   });
 
+  const authRecovery = config.AUTH_PROVIDER === "KCEX"
+    ? new AuthRecoveryController({
+        auth,
+        vault,
+        events,
+        logger,
+        getAutoLiveStatus: () => autoLive?.getState().status ?? "DISARMED",
+        getMutationInFlight: () => {
+          const automationStatus = autoLive?.getState().status;
+          if (automationStatus && ["SUBMITTING", "CONFIRMING", "PROTECTING"].includes(automationStatus)) return true;
+          const activeAttemptIds = [activeAutoAttemptId, activeCanaryAttemptId].filter((value): value is string => value !== null);
+          return activeAttemptIds.some((attemptId) => {
+            const attempt = storage.liveExecutionAttempts.getById(attemptId);
+            return attempt !== null && ["SUBMITTING", "SUBMITTED", "CONFIRMING"].includes(attempt.status);
+          });
+        },
+        getHardHalted: () => ["HALTED", "MANUAL_ACTION"].includes(autoLive?.getState().status ?? "DISARMED"),
+        pauseAutoLive: () => { autoLive?.pauseForAuth(); },
+        resumeAutoLive: () => { autoLive?.resumeAfterAuth(); },
+        haltAutoLive: () => { autoLive?.halt(); },
+        markMutationUnknown: (automationStatus) => {
+          const activeAttemptIds = [activeAutoAttemptId, activeCanaryAttemptId]
+            .filter((value): value is string => value !== null);
+          for (const attemptId of activeAttemptIds) {
+            const attempt = storage.liveExecutionAttempts.getById(attemptId);
+            if (attempt && ["SUBMITTING", "SUBMITTED", "CONFIRMING"].includes(attempt.status)
+              && automationStatus !== "PROTECTING") {
+              try { storage.liveExecutionAttempts.markUnknown(attemptId); } catch { /* Keep the unknown gate closed. */ }
+            }
+            if (automationStatus === "PROTECTING") {
+              const plan = storage.liveProtectionPlans.getByAttemptId(attemptId);
+              if (plan && ["PLANNED", "ACTIVE", "ERROR"].includes(plan.status)) {
+                try { storage.liveProtectionPlans.transition(plan.id, "UNKNOWN"); } catch { /* Keep the protection gate closed. */ }
+              }
+            }
+          }
+        },
+        getReadiness: (recoveryStartedAt) => {
+          const latest = futuresRead?.getLatestSnapshot();
+          const latestUpdatedAt = latest ? Date.parse(latest.updatedAt) : Number.NaN;
+          return {
+            freshRead: latest?.source === "KCEX"
+              && latest.freshness === "FRESH"
+              && Number.isFinite(latestUpdatedAt)
+              && latestUpdatedAt > recoveryStartedAt.getTime(),
+            resilienceHealthy: resilience?.getState().status === "HEALTHY",
+          };
+        },
+        onRecovered: async () => {
+          const resumedStatus = autoLive?.getState().status;
+          const plan = await scheduler.tick();
+          if (resumedStatus === "DUE" && !plan.dueSlot) autoLive?.stop();
+        },
+      })
+    : undefined;
+
   let lastCanaryBlockReasons: string[] = [];
   const getCanaryBlockReasons = async (input: LiveCanaryPreviewInput): Promise<string[]> => {
     await refreshLivePreflight(input.side, input.marginUsdt);
@@ -604,6 +660,7 @@ async function startServer(): Promise<void> {
     protection,
     scheduler,
     resilience,
+    authRecovery,
     liveAutomation: autoLive,
     liveCanary,
     verificationReportStore: verificationStore,
@@ -635,6 +692,7 @@ async function startServer(): Promise<void> {
     resilience?.stop();
     execution.close();
     unsubscribeAuthEvents?.();
+    authRecovery?.close();
     unsubscribeSchedulerEvents();
     unsubscribeLivePositionEvents();
     void (async () => {

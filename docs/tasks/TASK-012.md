@@ -31,7 +31,7 @@ Financial freshness uses `max(15 seconds, poll interval × 3)`, so a configured 
 - `GET /api/v1/resilience/state` exposes the shared `ResilienceStateSchema`.
 - `resilience.state` carries the same shared schema over `/api/v1/events`.
 - `system.heartbeat` remains process status `OK` and also includes `resilienceStatus`, `liveTrading=false`, and uptime. The Dashboard separately marks heartbeat stale after 45 seconds without an event.
-- The Dashboard shows auth, browser, read, failure, selector, storage, and heartbeat state. It displays `SESSION LOST — MANUAL LOGIN REQUIRED`, `SECURITY CHALLENGE — MANUAL ACTION REQUIRED`, and `SELECTOR DRIFT SUSPECTED — MANUAL DOM REVIEW REQUIRED` when applicable, plus the permanent warnings `NO AUTOMATIC LOGIN`, `NO CAPTCHA BYPASS`, and `NO AUTOMATIC KCEX ORDER RECOVERY`.
+- The Dashboard shows auth, browser, read, failure, selector, storage, and heartbeat state. It displays `SESSION LOST — MANUAL LOGIN REQUIRED IF RECOVERY DOES NOT COMPLETE`, `SECURITY CHALLENGE — MANUAL ACTION REQUIRED`, and `SELECTOR DRIFT SUSPECTED — MANUAL DOM REVIEW REQUIRED` when applicable. TASK-013 owns the separate bounded password recovery rule; this resilience service never submits OTP, bypasses CAPTCHA, or retries KCEX order recovery.
 - There is no resilience recovery write endpoint. Scheduler eligibility is blocked with `RUNTIME_UNHEALTHY` for `MANUAL_ACTION` and `HALTED`; existing due times and lifecycle records are not shifted or regenerated.
 
 ## Safety boundary

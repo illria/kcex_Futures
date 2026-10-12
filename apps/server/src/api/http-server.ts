@@ -18,6 +18,7 @@ import {
   DashboardSnapshotSchema,
   ResilienceStateSchema,
   type ResilienceState,
+  type AuthRecoveryState,
   parseDashboardEvent,
   type AuthState,
   type DashboardEvent,
@@ -38,6 +39,7 @@ import {
   ExecutionReconcileInputSchema,
 } from "../../../../packages/shared/src/execution.js";
 import { AuthService } from "../auth/auth-service.js";
+import type { AuthRecoveryController } from "../auth/auth-recovery-controller.js";
 import { EventBus } from "../realtime/event-bus.js";
 import { EncryptedCredentialVault, VaultLockedError, VaultUnlockError } from "../vault/encrypted-vault.js";
 import type { FuturesReadService } from "../futures/futures-read-service.js";
@@ -93,6 +95,7 @@ export interface DashboardServerOptions {
   protection?: ProtectionService;
   scheduler?: DailySchedulerService;
   resilience?: RuntimeResilienceService;
+  authRecovery?: AuthRecoveryController;
   liveAutomation?: AutoLiveOrchestrator;
   liveCanary?: KcexCanaryService;
   verificationReportStore?: KcexVerificationReportStore;
@@ -239,6 +242,7 @@ async function handleApiRequest(
   protection: ProtectionService | undefined,
   scheduler: DailySchedulerService | undefined,
   resilience: RuntimeResilienceService | undefined,
+  authRecovery: AuthRecoveryController | undefined,
   liveAutomation: AutoLiveOrchestrator | undefined,
   liveCanary: KcexCanaryService | undefined,
   verificationReportStore: KcexVerificationReportStore | undefined,
@@ -294,6 +298,19 @@ async function handleApiRequest(
 
   if (method === "GET" && url.pathname === "/api/v1/auth/state") {
     sendJson(response, 200, auth.getState());
+    return true;
+  }
+
+  if (method === "GET" && url.pathname === "/api/v1/auth/recovery/state") {
+    const fallback: AuthRecoveryState = {
+      status: "IDLE",
+      attemptCount: 0,
+      maxAttempts: 1,
+      resumeIntent: false,
+      reason: null,
+      updatedAt: new Date().toISOString(),
+    };
+    sendJson(response, 200, authRecovery?.getState() ?? fallback);
     return true;
   }
 
@@ -832,6 +849,7 @@ function initialEvents(
   scheduler?: DailySchedulerService,
   resilience?: RuntimeResilienceService,
   liveAutomation?: AutoLiveOrchestrator,
+  authRecovery?: AuthRecoveryController,
   liveCanary?: KcexCanaryService,
 ): DashboardEvent[] {
   const now = new Date().toISOString();
@@ -844,6 +862,7 @@ function initialEvents(
   const canSendFinancial = !isKcex || (authState.status === "AUTHENTICATED" && latest != null);
   const proposed: unknown[] = [
     { version: 1, type: "auth.state", timestamp: now, payload: authState },
+    ...(authRecovery ? [{ version: 1, type: "auth.recovery.state", timestamp: now, payload: authRecovery.getState() }] : []),
     { version: 1, type: "risk.state", timestamp: now, payload: RiskStateSchema.parse(risk?.getState() ?? createRiskStatePlaceholder(now)) },
     { version: 1, type: "execution.state", timestamp: now, payload: AssistedExecutionStateSchema.parse(execution?.getState() ?? createExecutionStatePlaceholder(now)) },
     { version: 1, type: "live.automation.state", timestamp: now, payload: liveAutomation?.getState() ?? createLiveAutomationPlaceholder(now) },
@@ -950,6 +969,7 @@ export function createDashboardServer(options: DashboardServerOptions): Server {
           options.protection,
           options.scheduler,
           options.resilience,
+          options.authRecovery,
           options.liveAutomation,
           options.liveCanary,
           options.verificationReportStore,
@@ -1000,7 +1020,7 @@ export function createDashboardServer(options: DashboardServerOptions): Server {
     for (const event of initialEvents(
       options.auth.getState(), startedAt, options.futuresRead, options.paperTrading, options.risk,
       options.execution, options.protection, options.scheduler, options.resilience,
-      options.liveAutomation,
+      options.liveAutomation, options.authRecovery,
       options.liveCanary,
     )) {
       webSocket.send(JSON.stringify(event));

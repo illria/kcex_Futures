@@ -200,6 +200,8 @@ Dashboard 和 WebSocket 当前只提供 `GPS_USDT` fixture/mock 数据，`LIVE_T
 
 TASK-003 将认证提供方显式区分为 `AUTH_PROVIDER=FAKE` 与 `AUTH_PROVIDER=KCEX`。KCEX 适配器只允许在 `https://www.kcex.com` 上填入凭据，并在每次跳转后重新检查 host；未知页面和安全挑战均失败关闭。Playwright storage state 通过 Vault 派生密钥加密保存，解密只在一次内存回调中可见。CI 使用本地 fixture，真实 KCEX 登录、邮箱 OTP 和 session 验证仍为 **DEFERRED MANUAL VERIFICATION**。
 
+TASK-013 的运行时恢复保持有界且由认证方式决定：密码模式在可信的 `SESSION_LOST` 后最多自动使用一次 Vault 凭据重新登录，若 KCEX 要求邮箱 OTP 则暂停并等待用户输入；Google 模式不会读取 Vault 密码，session 丢失后只显示手动 Google OAuth 恢复。恢复期间不会重试、绕过 CAPTCHA 或提交交易；进程重启后 Auto Live 仍为 `DISARMED`，恢复状态和凭据不会持久化。
+
 ## TASK-004 Futures Read-Only State Extractor
 
 当前状态：COMPLETE。
@@ -220,7 +222,7 @@ shared snapshots / WebSocket
 local Dashboard
 ```
 
-提取器只读取 `GPS_USDT` 的显式页面字段：价格、可用 USDT、保证金模式、杠杆、当前仓位和挂单。数值解析严格失败关闭，缺失或格式错误的数据保持 `null`，不会用 `0` 猜测。`KCEX_READONLY_ENABLED` 默认关闭，轮询只在认证状态和受信页面同时满足时启动；会话丢失、挑战页或 symbol 不匹配会停止读取，不会自动登录或刷新。
+提取器只读取 `GPS_USDT` 的显式页面字段：价格、可用 USDT、保证金模式、杠杆、当前仓位和挂单。数值解析严格失败关闭，缺失或格式错误的数据保持 `null`，不会用 `0` 猜测。`KCEX_READONLY_ENABLED` 默认关闭，轮询只在认证状态和受信页面同时满足时启动；会话丢失、挑战页或 symbol 不匹配会停止读取。TASK-013 的独立恢复控制器才会在密码模式下对一次明确的 `SESSION_LOST` 做一次有界重登录，不能绕过挑战或自动刷新页面。
 
 TASK-004 不包含下单、撤单、Long/Short 按钮、杠杆/保证金修改或真实 KCEX 验证。真实 DOM selector、登录 session 和 GPS_USDT 页面仍标记为 **DEFERRED MANUAL VERIFICATION**。CI 只使用 loopback fixture，并用网络 guard 拒绝意外公网请求。
 
@@ -276,7 +278,7 @@ Scheduler 只计划、提醒并跟踪人工确认的 fixture entry。它不会�
 
 TASK-012 增加只观察的运行韧性状态，跟踪认证、浏览器连接、只读数据新鲜度、连续读取失败、selector evidence 漂移、存储健康和进程 heartbeat。状态通过只读 API、WebSocket 和 Dashboard 展示；连续三次相同的缺失 selector evidence 会标记为 `SELECTOR_DRIFT_SUSPECTED` 并停止读取，等待人工检查。
 
-该状态服务不执行自动登录、OTP 提交、验证码绕过、浏览器重启、selector 自动修复或 KCEX 订单恢复。异常时 scheduler 将 due slot 标记为不可执行，但不会改写计划时间。`LIVE_TRADING=false` 保持强制关闭。真实 KCEX 页面和 selector 检查仍为 **DEFERRED MANUAL VERIFICATION**。详见 [docs/tasks/TASK-012.md](docs/tasks/TASK-012.md)。
+该状态服务本身不执行自动登录、OTP 提交、验证码绕过、浏览器重启、selector 自动修复或 KCEX 订单恢复；TASK-013 的认证恢复控制器在单独的有界规则下工作。异常时 scheduler 将 due slot 标记为不可执行，但不会改写计划时间。`LIVE_TRADING=false` 保持强制关闭。真实 KCEX 页面和 selector 检查仍为 **DEFERRED MANUAL VERIFICATION**。详见 [docs/tasks/TASK-012.md](docs/tasks/TASK-012.md)。
 
 ## 推荐技术栈
 

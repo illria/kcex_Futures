@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { ExecutionProvider } from "./execution.js";
 
-export const LiveAutomationModeSchema = z.enum(["DISARMED", "ARMED", "WAITING", "DUE", "PRECHECK", "SUBMITTING", "CONFIRMING", "PROTECTING", "POSITION_OPEN", "BLOCKED", "MANUAL_ACTION", "HALTED"]);
+export const LiveAutomationModeSchema = z.enum(["DISARMED", "ARMED", "WAITING", "DUE", "PAUSED_AUTH", "PRECHECK", "SUBMITTING", "CONFIRMING", "PROTECTING", "POSITION_OPEN", "BLOCKED", "MANUAL_ACTION", "HALTED"]);
 export type LiveAutomationMode = z.infer<typeof LiveAutomationModeSchema>;
 
 export const LIVE_AUTOMATION_CONFIRMATION_PHRASE = "START KCEX LIVE AUTO" as const;

@@ -107,13 +107,14 @@ See [docs/tasks/TASK-011.md](docs/tasks/TASK-011.md) for acceptance details.
 - stop read polling on session loss, challenges, untrusted pages, or runtime integrity failures
 - expose read-only resilience state through HTTP, WebSocket, and the Dashboard
 - block scheduler eligibility while runtime state requires manual action or is halted
-- do not perform automatic login, CAPTCHA bypass, browser relaunch, or KCEX order recovery
+- resilience service itself does not perform unbounded automatic login, CAPTCHA bypass, browser relaunch, or KCEX order recovery; TASK-013 owns the separate one-attempt auth recovery controller
 
 See [docs/tasks/TASK-012.md](docs/tasks/TASK-012.md) for acceptance details.
 
 ## Phase 9 — TASK-013: KCEX End-to-End Real Trading Launch (review ready)
 
 - complete Password + Email OTP and manual Google OAuth paths using KCEX-only encrypted session state
+- add one-attempt password recovery per conclusive session-loss episode, with user OTP and manual Google OAuth recovery
 - add a local read-only verification report and verified contract/selector gates
 - isolate the only real entry and protection writers under `apps/server/src/kcex-live/`
 - require a single explicit user Canary before the runtime-only Auto Live arm can pass

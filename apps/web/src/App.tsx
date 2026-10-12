@@ -5,11 +5,13 @@ import { createFakeDashboardSnapshot } from "../../../packages/shared/src/fake-s
 import { applySnapshotFreshness } from "../../../packages/shared/src/freshness.js";
 import {
   AuthStateSchema,
+  AuthRecoveryStateSchema,
   DashboardSnapshotSchema,
   MASTER_KEY_MIN_LENGTH,
   ResilienceStateSchema,
   parseDashboardEvent,
   type AuthState,
+  type AuthRecoveryState,
   type DashboardEvent,
   type DashboardSnapshot,
   type KcexFuturesSnapshot,
@@ -191,6 +193,7 @@ export function DashboardView({
   onLiveCanaryStateChange,
   verificationReport,
   onVerificationReportChange,
+  authRecovery,
 }: {
   snapshot: DashboardSnapshot;
   auth: AuthState;
@@ -206,6 +209,7 @@ export function DashboardView({
   onLiveCanaryStateChange?: (state: LiveCanaryState) => void;
   verificationReport?: KcexVerificationReport;
   onVerificationReportChange?: (report: KcexVerificationReport) => void;
+  authRecovery?: AuthRecoveryState;
 }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -236,6 +240,7 @@ export function DashboardView({
         <StatusTile label="Kill Switch" value={snapshot.status.killSwitch} />
         <StatusTile label="Read Health" value={snapshot.status.readHealth} />
         <StatusTile label="Freshness" value={futures.freshness} />
+        <StatusTile label="Auth Recovery" value={authRecovery?.status ?? "IDLE"} />
         <StatusTile label="Storage" value={snapshot.status.storage} />
       </section>
 
@@ -1320,14 +1325,14 @@ export function RuntimeResiliencePanel({
   const heartbeatAgeSeconds = lastHeartbeatAt === null ? null : Math.max(0, Math.floor((now - lastHeartbeatAt) / 1000));
   const heartbeatState = heartbeatAgeSeconds === null ? "WAITING" : heartbeatAgeSeconds > 45 ? "STALE" : "FRESH";
   const warnings: string[] = [];
-  if (resilience.reasons.includes("AUTH_SESSION_LOST")) warnings.push("SESSION LOST — MANUAL LOGIN REQUIRED");
+  if (resilience.reasons.includes("AUTH_SESSION_LOST")) warnings.push("SESSION LOST — MANUAL LOGIN REQUIRED IF RECOVERY DOES NOT COMPLETE");
   if (resilience.reasons.includes("MANUAL_CHALLENGE") || resilience.reasons.includes("OTP_REQUIRED")) {
     warnings.push("SECURITY CHALLENGE — MANUAL ACTION REQUIRED");
   }
   if (resilience.reasons.includes("SELECTOR_DRIFT_SUSPECTED")) {
     warnings.push("SELECTOR DRIFT SUSPECTED — MANUAL DOM REVIEW REQUIRED");
   }
-  warnings.push("NO AUTOMATIC LOGIN", "NO CAPTCHA BYPASS", "NO AUTOMATIC KCEX ORDER RECOVERY");
+  warnings.push("NO AUTOMATIC LOGIN AFTER ONE BOUNDED ATTEMPT", "ONE PASSWORD LOGIN PER LOSS EPISODE", "NO CAPTCHA BYPASS", "NO AUTOMATIC KCEX ORDER RECOVERY");
   return (
     <section className="panel resilience-panel" aria-label="Runtime Resilience">
       <div className="panel-heading">
@@ -1355,7 +1360,7 @@ export function RuntimeResiliencePanel({
       <p className="muted-note">
         Selector drift suspected: {resilience.selectorDrift.suspected ? "YES" : "NO"} · Evidence failures: {resilience.selectorDrift.consecutiveEvidenceFailures} · Missing fields: {resilience.selectorDrift.missingFields.length ? resilience.selectorDrift.missingFields.join(", ") : "None"}
       </p>
-      <p className="safety-note">Automatic login=false · Live entries require explicit runtime authorization · Stale after {resilience.readStaleAfterMs}ms</p>
+      <p className="safety-note">Auth recovery is bounded and user-gated · Live entries require explicit runtime authorization · Stale after {resilience.readStaleAfterMs}ms</p>
     </section>
   );
 }
@@ -1365,6 +1370,23 @@ function StatusTile({ label, value }: { label: string; value: string }) {
     <div className="status-tile">
       <span>{label}</span>
       <strong>{value}</strong>
+    </div>
+  );
+}
+
+function AuthRecoveryNotice({ recovery }: { recovery?: AuthRecoveryState }) {
+  if (!recovery || recovery.status === "IDLE" || recovery.status === "RECOVERED") return null;
+  const message = recovery.status === "RECOVERING"
+    ? "KCEX SESSION EXPIRED — RECOVERING LOGIN"
+    : recovery.status === "WAITING_OTP"
+      ? "EMAIL OTP REQUIRED — USER ACTION REQUIRED"
+      : recovery.status === "GOOGLE_OAUTH_REQUIRED"
+        ? "GOOGLE OAUTH REQUIRED — USER ACTION REQUIRED"
+        : "AUTH RECOVERY STOPPED — MANUAL ACTION REQUIRED";
+  return (
+    <div className="execution-warning" role="status" aria-label="Auth Recovery">
+      <strong>{message}</strong>
+      <span>Attempt {recovery.attemptCount} / {recovery.maxAttempts} · {recovery.reason ?? "No automatic retry"}</span>
     </div>
   );
 }
@@ -1398,9 +1420,11 @@ function displayMoney(value: number | null): string {
 export function AuthPanel({
   auth,
   onAuthChanged,
+  recovery,
 }: {
   auth: AuthState;
   onAuthChanged: (state: AuthState) => void;
+  recovery?: AuthRecoveryState;
 }) {
   const [masterKey, setMasterKey] = useState("");
   const [account, setAccount] = useState("");
@@ -1552,6 +1576,7 @@ export function AuthPanel({
     return (
       <main className="auth-shell">
         <section className="auth-card">
+          <AuthRecoveryNotice recovery={recovery} />
           <p className="eyebrow">Local Dashboard</p>
           <h1>Unlock your vault</h1>
           <p className="muted-note">The unlock key stays in memory for this request and is never returned by the API.</p>
@@ -1582,6 +1607,7 @@ export function AuthPanel({
     return (
       <main className="auth-shell">
         <section className="auth-card">
+          <AuthRecoveryNotice recovery={recovery} />
           <p className="eyebrow">{auth.authProvider === "FAKE" ? "Fake Auth · fixture only" : "KCEX authentication"}</p>
           <h1>KCEX Email Verification</h1>
           <form onSubmit={submitOtp}>
@@ -1612,6 +1638,7 @@ export function AuthPanel({
     return (
       <main className="auth-shell">
         <section className="auth-card">
+          <AuthRecoveryNotice recovery={recovery} />
           <p className="eyebrow">{auth.authProvider} authentication</p>
           <h1>{auth.status === "SESSION_CHECK" ? "Checking saved session…" : "Signing in…"}</h1>
           <p className="muted-note">Secrets remain in the local backend and are never shown in the dashboard.</p>
@@ -1625,6 +1652,7 @@ export function AuthPanel({
     return (
       <main className="auth-shell">
         <section className="auth-card">
+          <AuthRecoveryNotice recovery={recovery} />
           <p className="eyebrow">KCEX Google OAuth · manual</p>
           <h1>Finish sign-in in the browser</h1>
           <p className="muted-note">Complete Google password, 2FA, or any security check yourself. The app does not read or fill Google credentials. After KCEX redirects back, use Check Again.</p>
@@ -1638,10 +1666,32 @@ export function AuthPanel({
     );
   }
 
+  if (recovery?.status === "GOOGLE_OAUTH_REQUIRED") {
+    return (
+      <main className="auth-shell">
+        <section className="auth-card">
+          <AuthRecoveryNotice recovery={recovery} />
+          <p className="eyebrow">KCEX Google OAuth · manual</p>
+          <h1>Recover with Google</h1>
+          <p className="muted-note">The saved KCEX session was lost. Continue with Google manually; the app never reads, fills, or stores Google credentials.</p>
+          <button type="button" onClick={() => void startGoogleOAuth()} disabled={busy || auth.authProvider !== "KCEX"}>
+            {busy ? "Opening…" : "Continue with Google"}
+          </button>
+          <button type="button" className="secondary" onClick={() => void checkSession()} disabled={busy}>
+            {busy ? "Checking…" : "Check Again"}
+          </button>
+          <p className="safety-note">No Vault password fallback, automatic retry, or challenge bypass.</p>
+          {message ? <p className="form-error" role="alert">{message}</p> : null}
+        </section>
+      </main>
+    );
+  }
+
   if (auth.status === "MANUAL_CHALLENGE") {
     return (
       <main className="auth-shell">
         <section className="auth-card">
+          <AuthRecoveryNotice recovery={recovery} />
           <p className="eyebrow">{auth.authProvider} authentication</p>
           <h1>Manual security check required</h1>
           <p className="muted-note">A security challenge was detected. Complete it manually in the approved browser, then retry.</p>
@@ -1659,6 +1709,7 @@ export function AuthPanel({
     return (
       <main className="auth-shell">
         <section className="auth-card">
+          <AuthRecoveryNotice recovery={recovery} />
           <p className="eyebrow">{auth.authProvider} authentication</p>
           <h1>Authentication state is unknown</h1>
           <p className="muted-note">The page did not provide enough trusted evidence. No credential action was continued.</p>
@@ -1675,6 +1726,7 @@ export function AuthPanel({
   return (
     <main className="auth-shell">
       <section className="auth-card">
+        <AuthRecoveryNotice recovery={recovery} />
         <p className="eyebrow">{auth.status === "AUTH_FAILED" ? `${auth.authProvider} authentication failed` : auth.status === "SESSION_LOST" ? "Session lost" : "Vault unlocked"}</p>
         <h1>KCEX Credentials</h1>
         <p className="muted-note">
@@ -1731,6 +1783,7 @@ export function AuthPanel({
 
 export function App() {
   const [auth, setAuth] = useState<AuthState | null>(null);
+  const [authRecovery, setAuthRecovery] = useState<AuthRecoveryState | null>(null);
   const [snapshot, setSnapshot] = useState<DashboardSnapshot>(() => createFakeDashboardSnapshot());
   const [resilience, setResilience] = useState<ResilienceState | null>(null);
   const [lastHeartbeatAt, setLastHeartbeatAt] = useState<number | null>(null);
@@ -1767,6 +1820,9 @@ export function App() {
     void requestJson<unknown>("/api/v1/resilience/state")
       .then((value) => { if (!disposed) setResilience(ResilienceStateSchema.parse(value)); })
       .catch(() => { /* The resilience stream remains UNKNOWN until its first valid event. */ });
+    void requestJson<unknown>("/api/v1/auth/recovery/state")
+      .then((value) => { if (!disposed) setAuthRecovery(AuthRecoveryStateSchema.parse(value)); })
+      .catch(() => { /* Recovery state remains the safe absent placeholder. */ });
     void refreshSnapshot();
     void requestJson<unknown>("/api/v1/protection/state")
       .then((value) => { if (!disposed) setProtection(ProtectionRuntimeStateSchema.parse(value)); })
@@ -1793,6 +1849,7 @@ export function App() {
           setAuth(event.payload);
           if (event.payload.status === "AUTHENTICATED") void refreshSnapshot();
         }
+        if (event.type === "auth.recovery.state") setAuthRecovery(event.payload);
         if (event.type === "resilience.state") setResilience(event.payload);
         if (event.type === "system.heartbeat") setLastHeartbeatAt(Date.now());
         if (event.type === "futures.snapshot") {
@@ -1941,7 +1998,7 @@ export function App() {
   if (auth.status !== "AUTHENTICATED") {
     return (
       <>
-        <AuthPanel auth={auth} onAuthChanged={setAuth} />
+        <AuthPanel auth={auth} onAuthChanged={setAuth} recovery={authRecovery ?? undefined} />
         {resilience ? (
           <main className="dashboard auth-resilience">
             <RuntimeResiliencePanel resilience={resilience} lastHeartbeatAt={lastHeartbeatAt} />
@@ -1955,6 +2012,7 @@ export function App() {
     <DashboardView
       snapshot={snapshot}
       auth={auth}
+      authRecovery={authRecovery ?? undefined}
       webSocketConnected={webSocketConnected}
       resilience={resilience ?? undefined}
       lastHeartbeatAt={lastHeartbeatAt}

@@ -67,6 +67,7 @@ export class AutoLiveOrchestrator {
   private stopLoss: LiveProtectionSetting | null = null;
   private dueSlotId: string | null = null;
   private lastAttemptId: string | null = null;
+  private pausedAuthStatus: "ARMED" | "WAITING" | "DUE" | null = null;
   private stopRequested = false;
   private inFlight = false;
   private armed = false;
@@ -142,11 +143,31 @@ export class AutoLiveOrchestrator {
   stop(): LiveAutomationState {
     this.stopRequested = true;
     this.armed = false;
+    this.pausedAuthStatus = null;
     if (!this.inFlight) {
       this.status = "DISARMED";
       this.stopRequested = false;
       this.dueSlotId = null;
     }
+    return this.publish();
+  }
+
+  pauseForAuth(): LiveAutomationState {
+    if (["SUBMITTING", "CONFIRMING", "PROTECTING"].includes(this.status)) return this.halt();
+    if (!["ARMED", "WAITING", "DUE"].includes(this.status)) return this.getState();
+    this.pausedAuthStatus = this.status as "ARMED" | "WAITING" | "DUE";
+    this.status = "PAUSED_AUTH";
+    this.stopRequested = false;
+    this.hardHalted = false;
+    return this.publish();
+  }
+
+  resumeAfterAuth(): LiveAutomationState {
+    if (this.status !== "PAUSED_AUTH" || !this.pausedAuthStatus) return this.getState();
+    this.status = this.pausedAuthStatus;
+    this.pausedAuthStatus = null;
+    this.stopRequested = false;
+    this.hardHalted = false;
     return this.publish();
   }
 
@@ -256,6 +277,7 @@ export class AutoLiveOrchestrator {
     this.armed = false;
     this.stopRequested = true;
     this.hardHalted = true;
+    this.pausedAuthStatus = null;
     if (!this.inFlight) {
       this.status = "HALTED";
       this.stopRequested = false;
@@ -267,6 +289,7 @@ export class AutoLiveOrchestrator {
     this.armed = false;
     this.stopRequested = true;
     this.hardHalted = true;
+    this.pausedAuthStatus = null;
     if (!this.inFlight) {
       this.status = "MANUAL_ACTION";
       this.stopRequested = false;
@@ -275,7 +298,7 @@ export class AutoLiveOrchestrator {
   }
 
   isRuntimeAuthorized(): boolean {
-    return this.armed && !this.stopRequested && !this.hardHalted;
+    return this.armed && this.status !== "PAUSED_AUTH" && !this.stopRequested && !this.hardHalted;
   }
 
   private publish(): LiveAutomationState {

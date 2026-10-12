@@ -4,6 +4,7 @@ import {
   BrowserHealthInspectionSchema,
   type AuthState,
   type AuthStatus,
+  type AuthMethod,
   type BrowserHealthInspection,
 } from "../../../../packages/shared/src/protocol.js";
 import { EventBus } from "../realtime/event-bus.js";
@@ -24,6 +25,9 @@ export class AuthService {
   private status: AuthStatus = "APP_LOCKED";
   private updatedAt = new Date().toISOString();
   private credentialsSaved = false;
+  private authMethod: AuthMethod = "UNKNOWN";
+  private sessionOriginMethod: Extract<AuthMethod, "PASSWORD" | "GOOGLE"> | null = null;
+  private pendingAuthMethod: AuthMethod | null = null;
   private pendingOtp: PendingOtp | null = null;
 
   constructor(
@@ -41,10 +45,22 @@ export class AuthService {
     return this.snapshot();
   }
 
+  getAuthMethod(): AuthMethod {
+    return this.authMethod;
+  }
+
+  getRecoveryAuthMethod(): AuthMethod {
+    if (this.authMethod !== "SESSION") return this.authMethod;
+    return this.sessionOriginMethod ?? (this.credentialsSaved ? "PASSWORD" : "UNKNOWN");
+  }
+
   async unlock(masterKey: string): Promise<AuthState> {
     this.clearPendingOtp();
     this.vault.lock();
     this.credentialsSaved = false;
+    this.authMethod = "UNKNOWN";
+    this.sessionOriginMethod = null;
+    this.pendingAuthMethod = null;
     if (this.status !== "APP_LOCKED") this.transition("APP_LOCKED");
 
     const result = await this.vault.unlock(masterKey);
@@ -53,19 +69,25 @@ export class AuthService {
     if (this.sessionStore && await this.sessionStore.hasSession()) {
       this.transition("SESSION_CHECK");
       const restored = await this.restoreEncryptedSession();
-      if (restored === "AUTHENTICATED") {
+      if (restored.result === "AUTHENTICATED") {
+        this.sessionOriginMethod = restored.authMethod === "PASSWORD" || restored.authMethod === "GOOGLE"
+          ? restored.authMethod
+          : this.credentialsSaved ? "PASSWORD" : null;
+        this.authMethod = "SESSION";
         this.clearPendingOtp();
         this.transition("AUTHENTICATED");
         return this.snapshot();
       }
-      if (restored === "OTP_REQUIRED") {
+      if (restored.result === "OTP_REQUIRED") {
+        this.pendingAuthMethod = restored.authMethod ?? this.pendingAuthMethod;
+        this.authMethod = "SESSION";
         this.establishPendingOtp();
         this.transition("OTP_REQUIRED");
         return this.snapshot();
       }
-      if (restored === "MANUAL_CHALLENGE" || restored === "AUTH_UNKNOWN") {
+      if (restored.result === "MANUAL_CHALLENGE" || restored.result === "AUTH_UNKNOWN") {
         this.clearPendingOtp();
-        this.transition(restored);
+        this.transition(restored.result);
         return this.snapshot();
       }
 
@@ -94,6 +116,9 @@ export class AuthService {
     const result = await this.vault.deleteCredentials();
     this.credentialsSaved = false;
     this.clearPendingOtp();
+    this.authMethod = "UNKNOWN";
+    this.sessionOriginMethod = null;
+    this.pendingAuthMethod = null;
     await this.sessionStore?.clear();
     this.transition("CREDENTIALS_REQUIRED");
     return result;
@@ -107,6 +132,8 @@ export class AuthService {
     }
 
     this.clearPendingOtp();
+    this.sessionOriginMethod = null;
+    this.pendingAuthMethod = "PASSWORD";
     this.transition("LOGGING_IN");
     let result: AuthAdapterResult;
     try {
@@ -119,7 +146,7 @@ export class AuthService {
       this.transition("AUTH_FAILED");
       return this.snapshot();
     }
-    await this.applyAdapterResult(result);
+    await this.applyAdapterResult(result, "PASSWORD");
     return this.snapshot();
   }
 
@@ -129,11 +156,13 @@ export class AuthService {
       return this.snapshot();
     }
     this.clearPendingOtp();
+    this.sessionOriginMethod = null;
+    this.pendingAuthMethod = "GOOGLE";
     this.transition("LOGGING_IN");
     try {
       const result = await this.adapter.startGoogleOAuth();
       if (result === "GOOGLE_OAUTH_PENDING") this.transition("GOOGLE_OAUTH_PENDING");
-      else await this.applyAdapterResult(result);
+      else await this.applyAdapterResult(result, "GOOGLE");
     } catch {
       this.transition("AUTH_UNKNOWN");
     }
@@ -152,7 +181,7 @@ export class AuthService {
     this.clearPendingOtp();
     this.transition("SUBMITTING_OTP");
     try {
-      await this.applyAdapterResult(await this.adapter.submitOtp(candidate));
+      await this.applyAdapterResult(await this.adapter.submitOtp(candidate), this.pendingAuthMethod ?? this.authMethod);
       return this.snapshot();
     } catch {
       this.transition("AUTH_FAILED");
@@ -165,7 +194,7 @@ export class AuthService {
   async checkSession(): Promise<AuthState> {
     this.clearPendingOtp();
     this.transition("SESSION_CHECK");
-    await this.applyAdapterResult(await this.adapter.checkSession());
+    await this.applyAdapterResult(await this.adapter.checkSession(), this.pendingAuthMethod ?? this.authMethod);
     return this.snapshot();
   }
 
@@ -198,23 +227,34 @@ export class AuthService {
     this.clearPendingOtp();
     this.vault.lock();
     this.credentialsSaved = false;
+    this.authMethod = "UNKNOWN";
+    this.sessionOriginMethod = null;
+    this.pendingAuthMethod = null;
     this.status = "APP_LOCKED";
     void Promise.resolve(this.adapter.close?.()).catch(() => undefined);
   }
 
-  private async restoreEncryptedSession(): Promise<AuthAdapterResult> {
-    if (!this.sessionStore) return "SESSION_LOST";
+  private async restoreEncryptedSession(): Promise<{ result: AuthAdapterResult; authMethod: AuthMethod | null }> {
+    if (!this.sessionStore) return { result: "SESSION_LOST", authMethod: null };
+    let restoredMethod: AuthMethod | null = null;
     try {
-      return await this.sessionStore.withStorageState(async (storageState) => {
+      const result = await this.sessionStore.withSession(async (storageState, authMethod) => {
+        restoredMethod = authMethod;
         if (this.adapter.restoreSession) return this.adapter.restoreSession(storageState);
         return this.adapter.checkSession();
       });
+      return { result, authMethod: restoredMethod };
     } catch {
-      return "AUTH_UNKNOWN";
+      return { result: "AUTH_UNKNOWN", authMethod: restoredMethod };
     }
   }
 
-  private async applyAdapterResult(result: AuthAdapterResult): Promise<void> {
+  private async applyAdapterResult(result: AuthAdapterResult, successfulMethod?: AuthMethod): Promise<void> {
+    if (result === "GOOGLE_OAUTH_PENDING") {
+      this.pendingAuthMethod = "GOOGLE";
+      this.transition("GOOGLE_OAUTH_PENDING");
+      return;
+    }
     if (result === "OTP_REQUIRED") {
       this.establishPendingOtp();
       this.transition("OTP_REQUIRED");
@@ -222,6 +262,11 @@ export class AuthService {
     }
 
     this.clearPendingOtp();
+    if (result === "AUTHENTICATED" && successfulMethod) {
+      this.authMethod = successfulMethod;
+      if (successfulMethod === "PASSWORD" || successfulMethod === "GOOGLE") this.sessionOriginMethod = successfulMethod;
+    }
+    if (result !== "OTP_REQUIRED") this.pendingAuthMethod = null;
     this.transition(result);
     if (result === "AUTHENTICATED") await this.persistSessionIfAvailable();
   }
@@ -239,7 +284,8 @@ export class AuthService {
   private async persistSessionIfAvailable(): Promise<void> {
     if (!this.sessionStore || !this.adapter.exportSession) return;
     try {
-      await this.sessionStore.save(await this.adapter.exportSession());
+      const sessionMethod = this.authMethod === "SESSION" ? this.sessionOriginMethod ?? "SESSION" : this.authMethod;
+      await this.sessionStore.save(await this.adapter.exportSession(), sessionMethod);
     } catch {
       this.logger.warn({ authProvider: this.adapter.provider }, "Authenticated session could not be persisted.");
     }
@@ -279,6 +325,7 @@ export class AuthService {
     return AuthStateSchema.parse({
       status: this.status,
       authProvider: this.adapter.provider,
+      authMethod: this.authMethod,
       credentialsSaved: this.credentialsSaved,
       liveTrading: false,
       updatedAt: this.updatedAt,
