@@ -67,6 +67,16 @@ export class AuthRecoveryController {
     return AuthRecoveryStateSchema.parse(this.state);
   }
 
+  /**
+   * Returns whether this controller still owns an active authentication-loss
+   * episode. The runtime auth subscriber uses this to distinguish the OTP
+   * emitted by bounded recovery from an unrelated standalone OTP signal.
+   */
+  isRecoveryActive(): boolean {
+    return this.inFlight !== null
+      || ["RECOVERING", "WAITING_OTP", "GOOGLE_OAUTH_REQUIRED"].includes(this.state.status);
+  }
+
   close(): void {
     this.unsubscribe();
     this.inFlight = null;

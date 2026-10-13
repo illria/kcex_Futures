@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { AuthService } from "./auth/auth-service.js";
 import { AuthRecoveryController } from "./auth/auth-recovery-controller.js";
+import { subscribeAuthRuntime } from "./auth/auth-runtime-subscriber.js";
 import { FakeAuthAdapter } from "./auth/fake-auth-adapter.js";
 import { KcexAuthAdapter } from "./auth/kcex-auth-adapter.js";
 import { createDashboardServer, getDashboardBindAddress, getDashboardPort, resolveStaticRoot } from "./api/http-server.js";
@@ -158,19 +159,13 @@ async function startServer(): Promise<void> {
     getKillSwitchStatus: () => killSwitch.getStatus(),
     getResilienceStatus: () => resilience?.getState().status ?? "IDLE",
   });
+  let authRecovery: AuthRecoveryController | undefined;
   const unsubscribeAuthEvents = futuresRead
-    ? events.subscribe((event) => {
-        if (event.type !== "auth.state") return;
-        if (event.payload.status === "AUTHENTICATED") futuresRead.start();
-        else {
-          if (event.payload.status === "AUTH_UNKNOWN"
-            || event.payload.status === "MANUAL_CHALLENGE" || event.payload.status === "OTP_REQUIRED") {
-            autoLive?.requireManualAction();
-          }
-          futuresRead.stop(event.payload.status === "AUTH_UNKNOWN" ? "UNKNOWN"
-            : event.payload.status === "MANUAL_CHALLENGE" ? "MANUAL_CHALLENGE"
-              : event.payload.status === "SESSION_LOST" ? "SESSION_LOST" : undefined);
-        }
+    ? subscribeAuthRuntime({
+        events,
+        futuresRead,
+        getAutoLive: () => autoLive,
+        getAuthRecovery: () => authRecovery,
       })
     : undefined;
   resilience = new RuntimeResilienceService({
@@ -437,7 +432,7 @@ async function startServer(): Promise<void> {
     },
   });
 
-  const authRecovery = config.AUTH_PROVIDER === "KCEX"
+  authRecovery = config.AUTH_PROVIDER === "KCEX"
     ? new AuthRecoveryController({
         auth,
         vault,
