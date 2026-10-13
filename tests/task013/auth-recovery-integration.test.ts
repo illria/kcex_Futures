@@ -65,7 +65,7 @@ async function createHarness(
   const adapter = new RecoveryFixtureAdapter(recoveryResult);
   const auth = new AuthService(vault, events, logger, adapter);
   await auth.unlock(MASTER_KEY);
-  await auth.saveCredentials("fixture@example.test", "fixture-password", false);
+  await auth.saveCredentials("fixture@example.test", "fixture-password", true);
   expect((await auth.login()).status).toBe("AUTHENTICATED");
 
   let ready = true;
