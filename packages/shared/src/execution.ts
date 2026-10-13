@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const ExecutionProviderSchema = z.enum(["DISABLED", "FIXTURE"]);
+export const ExecutionProviderSchema = z.enum(["DISABLED", "FIXTURE", "KCEX"]);
 export type ExecutionProvider = z.infer<typeof ExecutionProviderSchema>;
 
 export const ExecutionStatusSchema = z.enum([

@@ -21,6 +21,7 @@ jobs:
     env:
       LIVE_TRADING: "false"
       LIVE_EXECUTION_PROVIDER: "FIXTURE"
+      KCEX_AUTOMATION_AUTHORIZED: "false"
       AUTH_PROVIDER: "FAKE"
       KCEX_READONLY_ENABLED: "false"
       PAPER_FEE_RATE: "0"
@@ -88,6 +89,7 @@ jobs:
     env:
       LIVE_TRADING: "false"
       LIVE_EXECUTION_PROVIDER: "FIXTURE"
+      KCEX_AUTOMATION_AUTHORIZED: "false"
       AUTH_PROVIDER: "FAKE"
       KCEX_READONLY_ENABLED: "false"
       PAPER_FEE_RATE: "0"
@@ -129,6 +131,7 @@ jobs:
     env:
       LIVE_TRADING: "false"
       LIVE_EXECUTION_PROVIDER: "FIXTURE"
+      KCEX_AUTOMATION_AUTHORIZED: "false"
       AUTH_PROVIDER: "FAKE"
       KCEX_READONLY_ENABLED: "false"
       PAPER_FEE_RATE: "0"
@@ -161,4 +164,46 @@ jobs:
         run: |
           echo "Read-only futures fixtures ran against loopback HTML only."
           echo "No KCEX host, credentials, cookies, or authenticated storage state were used."
+          echo "LIVE_TRADING=false"
+
+  browser-live-fixtures:
+    name: KCEX Live Writer Loopback Fixtures
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      LIVE_TRADING: "false"
+      LIVE_EXECUTION_PROVIDER: "FIXTURE"
+      KCEX_AUTOMATION_AUTHORIZED: "false"
+      AUTH_PROVIDER: "FAKE"
+      KCEX_READONLY_ENABLED: "false"
+      PAPER_FEE_RATE: "0"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Require lockfile
+        shell: bash
+        run: test -f package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium for loopback fixtures
+        run: npx playwright install --with-deps chromium
+
+      - name: Run KCEX live writer loopback fixtures
+        run: npm run test:browser:live
+
+      - name: Safety summary
+        shell: bash
+        run: |
+          echo "KCEX execution adapter tests used local loopback HTML only."
+          echo "Unexpected external browser requests are aborted and fail the fixture job."
           echo "LIVE_TRADING=false"

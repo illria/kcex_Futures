@@ -26,6 +26,12 @@ describe("AuditRepository sensitive payload guard", () => {
     { Authorization: "Bearer hidden" },
     { values: [{ storageState: "private" }] },
     { account: "fixture@example.test" },
+    { csrf: "csrf-fixture-secret" },
+    { xsrfToken: "xsrf-fixture-secret" },
+    { headers: { "x-csrf-token": "header-csrf-fixture-secret" } },
+    { googleAccount: "google-user-fixture@example.test" },
+    { googleEmail: "google-email-fixture@example.test" },
+    { googlePassword: "google-password-fixture-secret" },
   ])("rejects sensitive payload keys recursively: %j", async (payload) => {
     const storage = await createStorage();
     expect(() => storage.auditEvents.appendAuditEvent({

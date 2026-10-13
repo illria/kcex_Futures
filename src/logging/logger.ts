@@ -17,6 +17,16 @@ const SECRET_FIELDS = [
   "storage_state",
   "account",
   "email",
+  "googleAccount",
+  "googleEmail",
+  "googlePassword",
+  "csrf",
+  "csrfToken",
+  "csrf_token",
+  "xsrf",
+  "xsrfToken",
+  "xsrf_token",
+  "headers",
 ] as const;
 
 export const SECRET_REDACTION_PATHS = SECRET_FIELDS.flatMap((field) => [

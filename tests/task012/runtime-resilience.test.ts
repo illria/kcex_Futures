@@ -449,7 +449,7 @@ describe("TASK-012 long-running resilience state", () => {
     expect(auditEvents).toHaveLength(1);
     expect(auditEvents[0]?.payload).toHaveProperty("reasons");
     expect(auditEvents[0]?.payload).not.toHaveProperty("reasonCodes");
-    expect(SCHEMA_VERSION).toBe(4);
+    expect(SCHEMA_VERSION).toBe(5);
   });
 
   it("keeps only safe diagnostics and resilience source has no recovery or mutation calls", async () => {
@@ -467,7 +467,7 @@ describe("TASK-012 long-running resilience state", () => {
     expect(workflow).toContain('LIVE_EXECUTION_PROVIDER: "FIXTURE"');
     expect(workflow).toContain('AUTH_PROVIDER: "FAKE"');
     expect(workflow).toContain('KCEX_READONLY_ENABLED: "false"');
-    expect(SCHEMA_VERSION).toBe(4);
+    expect(SCHEMA_VERSION).toBe(5);
   });
 
   it("serves read-only resilience state over HTTP and the initial WebSocket stream", async () => {

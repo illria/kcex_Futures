@@ -47,6 +47,7 @@ export const SchedulerSlotSchema = z.object({
   dueAt: z.string().datetime(),
   status: SchedulerSlotStatusSchema,
   executionAttemptId: z.string().uuid().nullable(),
+  liveExecutionAttemptId: z.string().uuid().nullable().default(null),
   completedAt: z.string().datetime().nullable(),
   missedAt: z.string().datetime().nullable(),
   missReason: SchedulerMissReasonSchema.nullable(),
@@ -60,14 +61,16 @@ export const SchedulerSlotSchema = z.object({
     context.addIssue({ code: "custom", path: ["dueAt"], message: "Scheduler dueAt must be on the five-minute UTC grid for its date." });
   }
   if (slot.status === "COMPLETED") {
-    if (!slot.executionAttemptId || !slot.completedAt || slot.missedAt || slot.missReason) {
+    if ((!slot.executionAttemptId && !slot.liveExecutionAttemptId)
+      || (slot.executionAttemptId !== null && slot.liveExecutionAttemptId !== null)
+      || !slot.completedAt || slot.missedAt || slot.missReason) {
       context.addIssue({ code: "custom", path: ["status"], message: "COMPLETED requires a bound attempt and completion time only." });
     }
   } else if (slot.status === "MISSED") {
-    if (!slot.missedAt || !slot.missReason || slot.executionAttemptId || slot.completedAt) {
+    if (!slot.missedAt || !slot.missReason || slot.executionAttemptId || slot.liveExecutionAttemptId || slot.completedAt) {
       context.addIssue({ code: "custom", path: ["status"], message: "MISSED requires a miss timestamp and reason only." });
     }
-  } else if (slot.executionAttemptId || slot.completedAt || slot.missedAt || slot.missReason) {
+  } else if (slot.executionAttemptId || slot.liveExecutionAttemptId || slot.completedAt || slot.missedAt || slot.missReason) {
     context.addIssue({ code: "custom", path: ["status"], message: "Open scheduler slots cannot contain terminal fields." });
   }
 });

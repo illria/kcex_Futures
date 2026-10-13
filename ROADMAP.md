@@ -100,16 +100,30 @@ See [docs/tasks/TASK-010.md](docs/tasks/TASK-010.md) for the acceptance criteria
 
 See [docs/tasks/TASK-011.md](docs/tasks/TASK-011.md) for acceptance details.
 
-## Phase 8 — TASK-012: Long-Running Resilience (review ready)
+## Phase 8 — TASK-012: Long-Running Resilience (complete)
 
 - observe authenticated browser, read freshness, storage, and process heartbeat
 - report suspected selector drift after three matching safe observations
 - stop read polling on session loss, challenges, untrusted pages, or runtime integrity failures
 - expose read-only resilience state through HTTP, WebSocket, and the Dashboard
 - block scheduler eligibility while runtime state requires manual action or is halted
-- do not perform automatic login, CAPTCHA bypass, browser relaunch, or KCEX order recovery
+- resilience service itself does not perform unbounded automatic login, CAPTCHA bypass, browser relaunch, or KCEX order recovery; TASK-013 owns the separate one-attempt auth recovery controller
 
 See [docs/tasks/TASK-012.md](docs/tasks/TASK-012.md) for acceptance details.
+
+## Phase 9 — TASK-013: KCEX End-to-End Real Trading Launch (review ready)
+
+- complete Password + Email OTP and manual Google OAuth paths using KCEX-only encrypted session state
+- add one-attempt password recovery per conclusive session-loss episode, with user OTP and manual Google OAuth recovery
+- add a local read-only verification report and verified contract/selector gates
+- isolate the only real entry and protection writers under `apps/server/src/kcex-live/`
+- require a single explicit user Canary before the runtime-only Auto Live arm can pass
+- keep Auto Live disarmed on every process start, use no catch-up, and halt on UNKNOWN or manual-action states
+- run unit, migration, dashboard, and loopback browser fixture validation only in GitHub Actions
+
+Code and green CI reach **CODE REVIEW READY** only. Real KCEX read verification and the user-started one-time Canary remain separate acceptance gates; they are not run by the coding agent.
+
+See [docs/tasks/TASK-013.md](docs/tasks/TASK-013.md), [docs/KCEX_VERIFICATION.md](docs/KCEX_VERIFICATION.md), and [docs/LIVE_LAUNCH_CHECKLIST.md](docs/LIVE_LAUNCH_CHECKLIST.md).
 
 Every phase must pass its documented CI acceptance criteria before later work
 begins.

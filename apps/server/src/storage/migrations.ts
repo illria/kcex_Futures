@@ -7,7 +7,7 @@ export interface StorageMigration {
   sql: string;
 }
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 export const STORAGE_MIGRATIONS: readonly StorageMigration[] = [
   {
@@ -221,6 +221,118 @@ export const STORAGE_MIGRATIONS: readonly StorageMigration[] = [
       CREATE INDEX scheduler_slots_date_due_idx ON scheduler_slots(date_key, due_at, slot_index);
       CREATE INDEX scheduler_slots_status_idx ON scheduler_slots(status, due_at);
       CREATE INDEX execution_attempts_confirmed_at_idx ON execution_attempts(status, confirmed_at, side, symbol);
+    `,
+  },
+  {
+    version: 5,
+    name: "kcex_live_attempts_and_slot_binding",
+    sql: `
+      CREATE TABLE live_execution_attempts (
+        attempt_id TEXT PRIMARY KEY NOT NULL,
+        attempt_type TEXT NOT NULL CHECK(attempt_type IN ('SCHEDULED', 'CANARY')),
+        date_key TEXT REFERENCES daily_plans(date_key) ON DELETE RESTRICT,
+        slot_index INTEGER CHECK(slot_index IS NULL OR slot_index BETWEEN 0 AND 9),
+        symbol TEXT NOT NULL CHECK(symbol = 'GPS_USDT'),
+        side TEXT NOT NULL CHECK(side IN ('LONG', 'SHORT')),
+        margin_usdt REAL NOT NULL CHECK(margin_usdt > 0 AND margin_usdt <= 50),
+        leverage REAL NOT NULL CHECK(leverage = 10),
+        status TEXT NOT NULL CHECK(status IN ('SUBMITTING', 'SUBMITTED', 'CONFIRMING', 'CONFIRMED', 'FAILED', 'UNKNOWN')),
+        quantity REAL CHECK(quantity IS NULL OR quantity > 0),
+        notional_usdt REAL CHECK(notional_usdt IS NULL OR notional_usdt > 0),
+        submitted_at TEXT,
+        confirmation_started_at TEXT,
+        confirmed_at TEXT,
+        failed_at TEXT,
+        unknown_at TEXT,
+        failure_reason TEXT CHECK(failure_reason IS NULL OR failure_reason IN ('ORDER_REJECTED', 'PRECHECK_FAILED')),
+        observed_entry_price REAL CHECK(observed_entry_price IS NULL OR observed_entry_price > 0),
+        observed_size REAL CHECK(observed_size IS NULL OR observed_size > 0),
+        observed_at TEXT,
+        trade_id TEXT REFERENCES trades(id) ON DELETE RESTRICT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1 CHECK(version >= 1),
+        UNIQUE(date_key, slot_index),
+        CHECK((attempt_type = 'SCHEDULED' AND date_key IS NOT NULL AND slot_index IS NOT NULL AND margin_usdt = 50)
+          OR (attempt_type = 'CANARY' AND date_key IS NULL AND slot_index IS NULL)),
+        CHECK(status != 'SUBMITTED' OR (submitted_at IS NOT NULL AND quantity IS NOT NULL AND notional_usdt IS NOT NULL)),
+        CHECK(status != 'CONFIRMING' OR confirmation_started_at IS NOT NULL),
+        CHECK(status != 'CONFIRMED' OR (confirmed_at IS NOT NULL AND observed_entry_price IS NOT NULL AND observed_size IS NOT NULL AND observed_at IS NOT NULL AND trade_id IS NOT NULL)),
+        CHECK(status != 'FAILED' OR (failed_at IS NOT NULL AND failure_reason IS NOT NULL)),
+        CHECK(status != 'UNKNOWN' OR unknown_at IS NOT NULL)
+      );
+      CREATE INDEX live_execution_attempts_status_idx ON live_execution_attempts(status, created_at);
+      CREATE UNIQUE INDEX live_execution_attempts_single_canary_idx ON live_execution_attempts(attempt_type)
+        WHERE attempt_type = 'CANARY';
+
+      CREATE TABLE live_protection_plans (
+        id TEXT PRIMARY KEY NOT NULL,
+        execution_attempt_id TEXT NOT NULL UNIQUE REFERENCES live_execution_attempts(attempt_id) ON DELETE RESTRICT,
+        symbol TEXT NOT NULL CHECK(symbol = 'GPS_USDT'),
+        side TEXT NOT NULL CHECK(side IN ('LONG', 'SHORT')),
+        entry_price REAL NOT NULL CHECK(entry_price > 0),
+        position_size REAL NOT NULL CHECK(position_size > 0),
+        leverage REAL NOT NULL CHECK(leverage = 10),
+        tp_basis TEXT NOT NULL CHECK(tp_basis IN ('PRICE_PCT', 'ROI_PCT')),
+        tp_value REAL NOT NULL CHECK(tp_value > 0),
+        tp_target REAL NOT NULL CHECK(tp_target > 0),
+        sl_basis TEXT NOT NULL CHECK(sl_basis IN ('PRICE_PCT', 'ROI_PCT')),
+        sl_value REAL NOT NULL CHECK(sl_value > 0),
+        sl_target REAL NOT NULL CHECK(sl_target > 0),
+        status TEXT NOT NULL CHECK(status IN ('PLANNED', 'ACTIVE', 'UNKNOWN', 'ERROR', 'TRIGGERED_TP', 'TRIGGERED_SL', 'CLOSED_UNKNOWN')),
+        created_at TEXT NOT NULL,
+        activated_at TEXT,
+        updated_at TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1 CHECK(version >= 1),
+        CHECK(status != 'ACTIVE' OR activated_at IS NOT NULL)
+      );
+      CREATE UNIQUE INDEX live_protection_plans_position_guard_idx
+        ON live_protection_plans(symbol)
+        WHERE status IN ('PLANNED', 'ACTIVE', 'UNKNOWN', 'ERROR');
+
+      ALTER TABLE scheduler_slots RENAME TO scheduler_slots_v4;
+      CREATE TABLE scheduler_slots (
+        id TEXT PRIMARY KEY NOT NULL,
+        date_key TEXT NOT NULL REFERENCES daily_plans(date_key) ON DELETE RESTRICT,
+        slot_index INTEGER NOT NULL CHECK(slot_index BETWEEN 0 AND 9),
+        symbol TEXT NOT NULL CHECK(symbol = 'GPS_USDT'),
+        side TEXT NOT NULL CHECK(side IN ('LONG', 'SHORT')),
+        due_at TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('SCHEDULED', 'DUE', 'COMPLETED', 'MISSED')),
+        execution_attempt_id TEXT REFERENCES execution_attempts(attempt_id),
+        live_execution_attempt_id TEXT REFERENCES live_execution_attempts(attempt_id),
+        completed_at TEXT,
+        missed_at TEXT,
+        miss_reason TEXT CHECK(miss_reason IS NULL OR miss_reason IN (
+          'WINDOW_EXPIRED', 'DAY_ROLLOVER', 'POSITION_NOT_FLAT', 'POSITION_UNKNOWN',
+          'EXECUTION_UNRESOLVED', 'PROTECTION_UNRESOLVED', 'STORAGE_DEGRADED'
+        )),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1 CHECK(version >= 1),
+        UNIQUE(date_key, slot_index),
+        CHECK(
+          (status = 'COMPLETED' AND completed_at IS NOT NULL AND missed_at IS NULL AND miss_reason IS NULL
+            AND ((execution_attempt_id IS NOT NULL AND live_execution_attempt_id IS NULL)
+              OR (execution_attempt_id IS NULL AND live_execution_attempt_id IS NOT NULL)))
+          OR (status = 'MISSED' AND execution_attempt_id IS NULL AND live_execution_attempt_id IS NULL
+            AND completed_at IS NULL AND missed_at IS NOT NULL AND miss_reason IS NOT NULL)
+          OR (status IN ('SCHEDULED', 'DUE') AND execution_attempt_id IS NULL AND live_execution_attempt_id IS NULL
+            AND completed_at IS NULL AND missed_at IS NULL AND miss_reason IS NULL)
+        )
+      );
+      INSERT INTO scheduler_slots(
+        id,date_key,slot_index,symbol,side,due_at,status,execution_attempt_id,live_execution_attempt_id,
+        completed_at,missed_at,miss_reason,created_at,updated_at,version
+      ) SELECT id,date_key,slot_index,symbol,side,due_at,status,execution_attempt_id,NULL,
+        completed_at,missed_at,miss_reason,created_at,updated_at,version FROM scheduler_slots_v4;
+      DROP TABLE scheduler_slots_v4;
+      CREATE UNIQUE INDEX scheduler_slots_attempt_unique_idx ON scheduler_slots(execution_attempt_id)
+        WHERE execution_attempt_id IS NOT NULL;
+      CREATE UNIQUE INDEX scheduler_slots_live_attempt_unique_idx ON scheduler_slots(live_execution_attempt_id)
+        WHERE live_execution_attempt_id IS NOT NULL;
+      CREATE INDEX scheduler_slots_date_due_idx ON scheduler_slots(date_key, due_at, slot_index);
+      CREATE INDEX scheduler_slots_status_idx ON scheduler_slots(status, due_at);
     `,
   },
 ];

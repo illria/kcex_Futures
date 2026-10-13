@@ -134,6 +134,7 @@ export const AuditSeveritySchema = z.enum(["INFO", "WARN", "ERROR"]);
 const forbiddenPayloadKeyParts = [
   "password", "pass", "otp", "code", "cookie", "token", "authorization", "auth",
   "session", "storagestate", "masterkey", "secret", "credential", "account", "email", "header",
+  "csrf", "xsrf",
 ];
 
 function findUnsafePayloadReason(value: unknown, depth = 0, budget = { nodes: 0 }): string | null {

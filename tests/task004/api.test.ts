@@ -395,20 +395,10 @@ describe("TASK-004 read-only API boundaries", () => {
 
   it("does not send mock financial events before the first KCEX read", async () => {
     const url = await startServer(authState("AUTHENTICATED"));
-    const received = await new Promise<ReturnType<typeof parseDashboardEvent>[]>((resolve, reject) => {
-      const socket = new WebSocket(url.replace(/^http:/, "ws:") + "/api/v1/events", { headers: { origin: url } });
-      const eventsSeen: ReturnType<typeof parseDashboardEvent>[] = [];
-      socket.once("error", reject);
-      socket.on("message", (message) => {
-        eventsSeen.push(parseDashboardEvent(JSON.parse(message.toString())));
-        if (eventsSeen.length === 8) {
-          socket.close();
-          resolve(eventsSeen);
-        }
-      });
-    });
+    const received = await readInitialEvents(url);
     expect(received.map((event) => event.type)).toEqual([
-      "auth.state", "risk.state", "execution.state", "protection.state", "paper.state", "scheduler.plan", "system.log", "system.heartbeat",
+      "auth.state", "risk.state", "execution.state", "live.automation.state", "live.canary.state",
+      "protection.state", "paper.state", "scheduler.plan", "system.log", "system.heartbeat",
     ]);
     expect(received.some((event) => ["futures.snapshot", "market.snapshot", "account.balance", "futures.contract", "position.changed", "orders.snapshot", "futures.read-health"].includes(event.type))).toBe(false);
   });

@@ -20,11 +20,15 @@ import {
   ProtectionUnknownEventPayloadSchema,
 } from "./protection.js";
 import { SchedulerStateSchema } from "./scheduler.js";
+import { LiveAutomationStateSchema, LiveCanaryStateSchema } from "./live-launch.js";
 
 export const MASTER_KEY_MIN_LENGTH = 12;
 
 export const AuthProviderSchema = z.enum(["FAKE", "KCEX"]);
 export type AuthProvider = z.infer<typeof AuthProviderSchema>;
+
+export const AuthMethodSchema = z.enum(["PASSWORD", "GOOGLE", "SESSION", "UNKNOWN"]);
+export type AuthMethod = z.infer<typeof AuthMethodSchema>;
 
 export const AuthStatusSchema = z.enum([
   "APP_LOCKED",
@@ -32,6 +36,7 @@ export const AuthStatusSchema = z.enum([
   "CREDENTIALS_REQUIRED",
   "SESSION_CHECK",
   "LOGGING_IN",
+  "GOOGLE_OAUTH_PENDING",
   "OTP_REQUIRED",
   "SUBMITTING_OTP",
   "AUTHENTICATED",
@@ -46,12 +51,33 @@ export const AuthStateSchema = z
   .object({
     status: AuthStatusSchema,
     authProvider: AuthProviderSchema,
+    authMethod: AuthMethodSchema.optional(),
     credentialsSaved: z.boolean(),
     liveTrading: z.literal(false),
     updatedAt: z.string().min(1),
   })
   .strict();
 export type AuthState = z.infer<typeof AuthStateSchema>;
+
+export const AuthRecoveryStatusSchema = z.enum([
+  "IDLE",
+  "RECOVERING",
+  "WAITING_OTP",
+  "GOOGLE_OAUTH_REQUIRED",
+  "RECOVERED",
+  "MANUAL_ACTION",
+]);
+export type AuthRecoveryStatus = z.infer<typeof AuthRecoveryStatusSchema>;
+
+export const AuthRecoveryStateSchema = z.object({
+  status: AuthRecoveryStatusSchema,
+  attemptCount: z.number().int().min(0).max(1),
+  maxAttempts: z.literal(1),
+  resumeIntent: z.boolean(),
+  reason: z.string().trim().min(1).max(64).nullable(),
+  updatedAt: z.string().min(1),
+}).strict();
+export type AuthRecoveryState = z.infer<typeof AuthRecoveryStateSchema>;
 
 export const DataSourceSchema = z.enum(["MOCK", "KCEX"]);
 export type DataSource = z.infer<typeof DataSourceSchema>;
@@ -273,15 +299,15 @@ export const DashboardSnapshotSchema = z
       .object({
         kcex: z.enum(["LOGIN_REQUIRED", "FAKE_AUTHENTICATED", "KCEX_AUTHENTICATED"]),
         browser: BrowserStatusSchema,
-        mode: z.literal("PAPER"),
-        trading: z.literal("PAUSED"),
+        mode: z.enum(["PAPER", "LIVE"]),
+        trading: z.enum(["PAUSED", "ARMED"]),
         killSwitch: KillSwitchStatusSchema,
         readOnlyEnabled: z.boolean(),
         readHealth: ReadHealthSchema,
         storage: StorageStatusSchema,
       })
       .strict(),
-    liveTrading: z.literal(false),
+    liveTrading: z.boolean(),
     futures: KcexFuturesSnapshotSchema,
     market: MarketSnapshotSchema,
     account: AccountSnapshotSchema,
@@ -331,6 +357,7 @@ const AccountBalanceEventPayloadSchema = z
 
 export const DashboardEventSchema = z.discriminatedUnion("type", [
   z.object({ ...EventMetaSchema, type: z.literal("auth.state"), payload: AuthStateSchema }).strict(),
+  z.object({ ...EventMetaSchema, type: z.literal("auth.recovery.state"), payload: AuthRecoveryStateSchema }).strict(),
   z.object({ ...EventMetaSchema, type: z.literal("futures.snapshot"), payload: KcexFuturesSnapshotSchema }).strict(),
   z.object({ ...EventMetaSchema, type: z.literal("market.snapshot"), payload: MarketSnapshotSchema }).strict(),
   z.object({ ...EventMetaSchema, type: z.literal("account.balance"), payload: AccountBalanceEventPayloadSchema }).strict(),
@@ -359,6 +386,8 @@ export const DashboardEventSchema = z.discriminatedUnion("type", [
   z.object({ ...EventMetaSchema, type: z.literal("execution.confirming"), payload: ExecutionConfirmingPayloadSchema }).strict(),
   z.object({ ...EventMetaSchema, type: z.literal("execution.confirmed"), payload: ExecutionConfirmedPayloadSchema }).strict(),
   z.object({ ...EventMetaSchema, type: z.literal("execution.unknown"), payload: ExecutionUnknownPayloadSchema }).strict(),
+  z.object({ ...EventMetaSchema, type: z.literal("live.automation.state"), payload: LiveAutomationStateSchema }).strict(),
+  z.object({ ...EventMetaSchema, type: z.literal("live.canary.state"), payload: LiveCanaryStateSchema }).strict(),
   z.object({ ...EventMetaSchema, type: z.literal("protection.state"), payload: ProtectionRuntimeStateSchema }).strict(),
   z.object({ ...EventMetaSchema, type: z.literal("protection.activated"), payload: ProtectionPlanSchema }).strict(),
   z.object({ ...EventMetaSchema, type: z.literal("protection.triggered"), payload: ProtectionTriggeredEventPayloadSchema }).strict(),
@@ -383,7 +412,7 @@ export const DashboardEventSchema = z.discriminatedUnion("type", [
     type: z.literal("system.heartbeat"),
     payload: z.object({
       status: z.literal("OK"),
-      liveTrading: z.literal(false),
+      liveTrading: z.boolean(),
       uptimeSeconds: z.number().int().nonnegative(),
       resilienceStatus: ResilienceStatusSchema,
     }).strict(),

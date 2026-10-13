@@ -15,6 +15,9 @@ export const KCEX_SELECTORS = {
     'input[name="password"], input[autocomplete="current-password"], input[type="password"]',
   loginSubmit:
     'button[type="submit"], [data-testid="login-submit"], [aria-label*="log in"], [aria-label*="sign in"]',
+  // Candidate only. TASK-013 requires explicit local verification before it can be clicked.
+  googleOAuthStart:
+    'button[data-testid*="google"], a[data-testid*="google"], button[aria-label*="Google"], a[aria-label*="Google"]',
   otpInput:
     'input[name="code"], input[name="otp"], input[autocomplete="one-time-code"], input[data-testid="otp-input"]',
   otpSubmit:

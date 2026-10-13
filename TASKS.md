@@ -104,10 +104,18 @@ Spec: [docs/tasks/TASK-011.md](docs/tasks/TASK-011.md)
 Scheduler plans and tracks UTC slots only. It does not automatically arm,
 preview, confirm, submit, or manage positions.
 
-## Review Ready
+## Completed
 
 ### TASK-012 — Long-Running Resilience and Recovery
 
-Status: REVIEW READY
+Status: COMPLETE
 
 Spec: [docs/tasks/TASK-012.md](docs/tasks/TASK-012.md)
+
+## Review Ready
+
+### TASK-013 — KCEX End-to-End Real Trading Launch
+
+Status: REVIEW READY
+
+Spec: [docs/tasks/TASK-013.md](docs/tasks/TASK-013.md)

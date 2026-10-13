@@ -18,6 +18,7 @@ export interface KcexAuthAdapterOptions {
   browser?: Browser;
   context?: BrowserContext;
   page?: Page;
+  googleOAuthSelector?: string;
 }
 
 async function visibleLocator(page: Page, selector: string): Promise<Locator | null> {
@@ -49,6 +50,8 @@ export class KcexAuthAdapter implements AuthAdapter {
   private readonly baseUrl: string;
   private readonly loginUrl: string;
   private readonly headless: boolean;
+  private readonly googleOAuthSelector: string | null;
+  private googleOAuthInProgress = false;
 
   constructor(options: KcexAuthAdapterOptions = {}) {
     this.browser = options.browser ?? null;
@@ -57,6 +60,7 @@ export class KcexAuthAdapter implements AuthAdapter {
     this.ownsBrowser = !options.browser && !options.page && !options.context;
     this.ownsContext = !options.context && !options.page;
     this.headless = options.headless ?? true;
+    this.googleOAuthSelector = options.googleOAuthSelector ?? null;
     this.baseUrl = options.baseUrl ?? DEFAULT_KCEX_BASE_URL;
     assertTrustedKcexBaseUrl(this.baseUrl);
     this.loginUrl = new URL("/login", this.baseUrl).toString();
@@ -117,11 +121,48 @@ export class KcexAuthAdapter implements AuthAdapter {
     }
   }
 
+  /** Start OAuth on a trusted KCEX login page; Google credential handling stays manual. */
+  async startGoogleOAuth(): Promise<AuthAdapterResult> {
+    try {
+      if (!this.googleOAuthSelector) return "AUTH_UNKNOWN";
+      const page = await this.ensurePage();
+      if (!isTrustedKcexUrl(page.url())) {
+        await page.goto(this.loginUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
+      }
+      this.assertTrustedPage(page);
+      const start = await visibleLocator(page, this.googleOAuthSelector);
+      if (!start) return "AUTH_UNKNOWN";
+      const popupPromise = page.waitForEvent("popup", { timeout: 3_000 }).catch(() => null);
+      this.assertTrustedPage(page);
+      await start.click({ timeout: 10_000 });
+      this.googleOAuthInProgress = true;
+      const popup = await popupPromise;
+      if (popup) {
+        await popup.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => undefined);
+        this.page = popup;
+      }
+      // The user completes any Google password, 2FA, or CAPTCHA interaction.
+      // Do not inspect, fill, or submit fields on the Google origin.
+      return "GOOGLE_OAUTH_PENDING";
+    } catch {
+      return "AUTH_UNKNOWN";
+    }
+  }
+
   async checkSession(): Promise<AuthAdapterResult> {
     try {
       if (!this.page) return "AUTH_UNKNOWN";
+      if (!isTrustedKcexUrl(this.page.url()) && this.googleOAuthInProgress) {
+        // OAuth is user-driven on Google's page. Keep the manual recovery UI
+        // available without reading its DOM or touching credentials.
+        return "GOOGLE_OAUTH_PENDING";
+      }
       this.assertTrustedPage(this.page);
       const result = await this.detectResult(this.page, false);
+      if (result === "AUTHENTICATED" || result === "OTP_REQUIRED" || result === "MANUAL_CHALLENGE" || result === "SESSION_LOST") {
+        this.googleOAuthInProgress = false;
+      }
+      if (result === "AUTH_UNKNOWN" && this.googleOAuthInProgress) return "GOOGLE_OAUTH_PENDING";
       if (result === "AUTHENTICATED" || result === "OTP_REQUIRED" || result === "MANUAL_CHALLENGE") {
         return result;
       }
@@ -132,7 +173,10 @@ export class KcexAuthAdapter implements AuthAdapter {
       this.assertTrustedPage(this.page);
       const loginForm = await visibleLocator(this.page, KCEX_SELECTORS.loginForm);
       const loginControl = await visibleLocator(this.page, KCEX_SELECTORS.loginControl);
-      if (loginForm || loginControl) return "SESSION_LOST";
+      if (loginForm || loginControl) {
+        this.googleOAuthInProgress = false;
+        return "SESSION_LOST";
+      }
       return "AUTH_UNKNOWN";
     } catch {
       return "AUTH_UNKNOWN";
@@ -156,7 +200,17 @@ export class KcexAuthAdapter implements AuthAdapter {
 
   async exportSession(): Promise<unknown> {
     if (!this.context) return null;
-    return this.context.storageState();
+    const storageState = await this.context.storageState();
+    const cookies = Array.isArray(storageState.cookies)
+      ? storageState.cookies.filter((cookie) => cookie.domain.replace(/^\./, "").toLowerCase() === "www.kcex.com")
+      : [];
+    const origins = Array.isArray(storageState.origins)
+      ? storageState.origins.filter((entry) => {
+          try { return new URL(entry.origin).origin === "https://www.kcex.com"; }
+          catch { return false; }
+        })
+      : [];
+    return { cookies, origins };
   }
 
   /**
@@ -195,6 +249,7 @@ export class KcexAuthAdapter implements AuthAdapter {
   async close(): Promise<void> {
     if (this.ownsContext) await this.context?.close().catch(() => undefined);
     if (this.ownsBrowser) await this.browser?.close().catch(() => undefined);
+    this.googleOAuthInProgress = false;
     this.page = null;
     this.context = null;
     this.browser = null;

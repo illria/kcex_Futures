@@ -18,6 +18,7 @@ import {
   DashboardSnapshotSchema,
   ResilienceStateSchema,
   type ResilienceState,
+  type AuthRecoveryState,
   parseDashboardEvent,
   type AuthState,
   type DashboardEvent,
@@ -38,6 +39,7 @@ import {
   ExecutionReconcileInputSchema,
 } from "../../../../packages/shared/src/execution.js";
 import { AuthService } from "../auth/auth-service.js";
+import type { AuthRecoveryController } from "../auth/auth-recovery-controller.js";
 import { EventBus } from "../realtime/event-bus.js";
 import { EncryptedCredentialVault, VaultLockedError, VaultUnlockError } from "../vault/encrypted-vault.js";
 import type { FuturesReadService } from "../futures/futures-read-service.js";
@@ -55,6 +57,19 @@ import type { ProtectionService } from "../protection/protection-service.js";
 import { ProtectionServiceError } from "../protection/protection-service.js";
 import type { DailySchedulerService } from "../scheduler/daily-scheduler-service.js";
 import type { RuntimeResilienceService } from "../resilience/runtime-resilience-service.js";
+import { AutoLiveOrchestrator, LiveAutomationBlockedError } from "../kcex-live/auto-live-orchestrator.js";
+import {
+  createLiveCanaryPlaceholder,
+  createLiveAutomationPlaceholder,
+  LiveAutomationArmInputSchema,
+  LiveAutomationProtectionInputSchema,
+  LiveCanaryConfirmInputSchema,
+  LiveCanaryPreviewInputSchema,
+  KcexVerificationSaveInputSchema,
+  type KcexVerificationReport,
+} from "../../../../packages/shared/src/live-launch.js";
+import type { KcexCanaryService } from "../kcex-live/kcex-canary-service.js";
+import type { KcexVerificationReportStore } from "../kcex-live/verification-report-store.js";
 
 const UnlockInputSchema = z.object({
   masterKey: z.string().min(MASTER_KEY_MIN_LENGTH).max(4096),
@@ -80,6 +95,11 @@ export interface DashboardServerOptions {
   protection?: ProtectionService;
   scheduler?: DailySchedulerService;
   resilience?: RuntimeResilienceService;
+  authRecovery?: AuthRecoveryController;
+  liveAutomation?: AutoLiveOrchestrator;
+  liveCanary?: KcexCanaryService;
+  verificationReportStore?: KcexVerificationReportStore;
+  onVerificationReportChanged?: (report: KcexVerificationReport) => void;
 }
 
 class HttpError extends Error {
@@ -222,12 +242,24 @@ async function handleApiRequest(
   protection: ProtectionService | undefined,
   scheduler: DailySchedulerService | undefined,
   resilience: RuntimeResilienceService | undefined,
+  authRecovery: AuthRecoveryController | undefined,
+  liveAutomation: AutoLiveOrchestrator | undefined,
+  liveCanary: KcexCanaryService | undefined,
+  verificationReportStore: KcexVerificationReportStore | undefined,
+  onVerificationReportChanged: ((report: KcexVerificationReport) => void) | undefined,
 ): Promise<boolean> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "127.0.0.1"}`);
   const method = request.method ?? "GET";
 
   if (!url.pathname.startsWith("/api/")) return false;
   const requiresLiveOrigin = method === "POST" && [
+    "/api/v1/auth/google/start",
+    "/api/v1/live-canary/preview",
+    "/api/v1/live-canary/confirm",
+    "/api/v1/kcex-verification/report",
+    "/api/v1/live-automation/configure",
+    "/api/v1/live-automation/arm",
+    "/api/v1/live-automation/stop",
     "/api/v1/live/arm",
     "/api/v1/live/disarm",
     "/api/v1/live/preview",
@@ -238,8 +270,47 @@ async function handleApiRequest(
   ].includes(url.pathname);
   requireSameOrigin(request, requiresLiveOrigin);
 
+  if (method === "GET" && url.pathname === "/api/v1/kcex-verification/report") {
+    sendJson(response, 200, await verificationReportStore?.load() ?? null);
+    return true;
+  }
+
+  if (method === "POST" && url.pathname === "/api/v1/kcex-verification/report") {
+    const raw = await readJson(request);
+    try {
+      if (!verificationReportStore) throw new HttpError(503, "KCEX verification is unavailable.");
+      const state = auth.getState();
+      if (state.authProvider !== "KCEX" || state.status !== "AUTHENTICATED" || !futuresRead?.enabled) {
+        throw new HttpError(409, "KCEX read-only authentication is required.");
+      }
+      if (liveAutomation?.getState().liveTrading) {
+        throw new HttpError(409, "Read-only verification is unavailable while live trading is enabled.");
+      }
+      const input = parseRequestBody(KcexVerificationSaveInputSchema, raw);
+      const report = await verificationReportStore.saveManual(input);
+      onVerificationReportChanged?.(report);
+      sendJson(response, 200, report);
+    } finally {
+      clearStringFields(raw);
+    }
+    return true;
+  }
+
   if (method === "GET" && url.pathname === "/api/v1/auth/state") {
     sendJson(response, 200, auth.getState());
+    return true;
+  }
+
+  if (method === "GET" && url.pathname === "/api/v1/auth/recovery/state") {
+    const fallback: AuthRecoveryState = {
+      status: "IDLE",
+      attemptCount: 0,
+      maxAttempts: 1,
+      resumeIntent: false,
+      reason: null,
+      updatedAt: new Date().toISOString(),
+    };
+    sendJson(response, 200, authRecovery?.getState() ?? fallback);
     return true;
   }
 
@@ -253,6 +324,87 @@ async function handleApiRequest(
 
   if (method === "GET" && url.pathname === "/api/v1/live/state") {
     sendJson(response, 200, AssistedExecutionStateSchema.parse(execution?.getState() ?? createExecutionStatePlaceholder()));
+    return true;
+  }
+
+  if (method === "GET" && url.pathname === "/api/v1/live-automation/state") {
+    sendJson(response, 200, liveAutomation ? await liveAutomation.refresh() : createLiveAutomationPlaceholder());
+    return true;
+  }
+
+  if (method === "POST" && url.pathname === "/api/v1/live-automation/configure") {
+    const raw = await readJson(request);
+    try {
+      const input = parseRequestBody(LiveAutomationProtectionInputSchema, raw);
+      if (!liveAutomation) throw new HttpError(503, "Live automation is unavailable.");
+      sendJson(response, 200, liveAutomation.configureProtection(input));
+    } finally {
+      clearStringFields(raw);
+    }
+    return true;
+  }
+
+  if (method === "POST" && url.pathname === "/api/v1/live-automation/arm") {
+    const raw = await readJson(request);
+    try {
+      const input = parseRequestBody(LiveAutomationArmInputSchema, raw);
+      if (!liveAutomation) throw new HttpError(503, "Live automation is unavailable.");
+      try {
+        await liveAutomation.refresh();
+        sendJson(response, 200, liveAutomation.arm(input.confirmation));
+      } catch (error) {
+        if (error instanceof LiveAutomationBlockedError) {
+          sendJson(response, 409, { error: "LIVE_AUTOMATION_BLOCKED", state: error.state });
+        } else if (error instanceof Error && error.message === "LIVE_AUTOMATION_CONFIRMATION_MISMATCH") {
+          throw new HttpError(400, "Confirmation text did not match.");
+        } else {
+          throw error;
+        }
+      }
+    } finally {
+      clearStringFields(raw);
+    }
+    return true;
+  }
+
+  if (method === "POST" && url.pathname === "/api/v1/live-automation/stop") {
+    const raw = await readJson(request);
+    try {
+      parseRequestBody(EmptyInputSchema, raw);
+      if (!liveAutomation) throw new HttpError(503, "Live automation is unavailable.");
+      sendJson(response, 200, liveAutomation.stop());
+    } finally {
+      clearStringFields(raw);
+    }
+    return true;
+  }
+
+  if (method === "GET" && url.pathname === "/api/v1/live-canary/state") {
+    sendJson(response, 200, liveCanary?.getState() ?? createLiveCanaryPlaceholder());
+    return true;
+  }
+
+  if (method === "POST" && url.pathname === "/api/v1/live-canary/preview") {
+    const raw = await readJson(request);
+    try {
+      const input = parseRequestBody(LiveCanaryPreviewInputSchema, raw);
+      if (!liveCanary) throw new HttpError(503, "Live canary is unavailable.");
+      sendJson(response, 200, await liveCanary.createPreview(input));
+    } finally {
+      clearStringFields(raw);
+    }
+    return true;
+  }
+
+  if (method === "POST" && url.pathname === "/api/v1/live-canary/confirm") {
+    const raw = await readJson(request);
+    try {
+      const input = parseRequestBody(LiveCanaryConfirmInputSchema, raw);
+      if (!liveCanary) throw new HttpError(503, "Live canary is unavailable.");
+      sendJson(response, 200, await liveCanary.confirm(input));
+    } finally {
+      clearStringFields(raw);
+    }
     return true;
   }
 
@@ -478,9 +630,18 @@ async function handleApiRequest(
     const riskState = risk
       ? await risk.refresh()
       : createRiskStatePlaceholder(new Date().toISOString());
+    const liveState = liveAutomation?.getState();
+    const automationActive = liveState !== undefined
+      && ["ARMED", "WAITING", "DUE", "PRECHECK", "SUBMITTING", "CONFIRMING", "PROTECTING", "POSITION_OPEN"].includes(liveState.status);
     const snapshot = DashboardSnapshotSchema.parse({
       ...baseSnapshot,
-      status: { ...baseSnapshot.status, killSwitch: riskState.killSwitch },
+      status: {
+        ...baseSnapshot.status,
+        killSwitch: riskState.killSwitch,
+        mode: liveState?.liveTrading ? "LIVE" : "PAPER",
+        trading: automationActive ? "ARMED" : "PAUSED",
+      },
+      liveTrading: liveState?.liveTrading ?? false,
       risk: riskState,
       execution: execution?.getState() ?? createExecutionStatePlaceholder(),
       paper: paperTrading?.getState() ?? createIdlePaperTradingState(new Date().toISOString()),
@@ -574,6 +735,18 @@ async function handleApiRequest(
       parseRequestBody(EmptyInputSchema, raw);
       getStateOrThrow(auth);
       sendJson(response, 200, await auth.login());
+    } finally {
+      clearStringFields(raw);
+    }
+    return true;
+  }
+
+  if (method === "POST" && url.pathname === "/api/v1/auth/google/start") {
+    const raw = await readJson(request);
+    try {
+      parseRequestBody(EmptyInputSchema, raw);
+      getStateOrThrow(auth);
+      sendJson(response, 200, await auth.startGoogleOAuth());
     } finally {
       clearStringFields(raw);
     }
@@ -675,6 +848,9 @@ function initialEvents(
   protection?: ProtectionService,
   scheduler?: DailySchedulerService,
   resilience?: RuntimeResilienceService,
+  liveAutomation?: AutoLiveOrchestrator,
+  authRecovery?: AuthRecoveryController,
+  liveCanary?: KcexCanaryService,
 ): DashboardEvent[] {
   const now = new Date().toISOString();
   const latest = futuresRead?.getLatestSnapshot();
@@ -686,8 +862,11 @@ function initialEvents(
   const canSendFinancial = !isKcex || (authState.status === "AUTHENTICATED" && latest != null);
   const proposed: unknown[] = [
     { version: 1, type: "auth.state", timestamp: now, payload: authState },
+    ...(authRecovery ? [{ version: 1, type: "auth.recovery.state", timestamp: now, payload: authRecovery.getState() }] : []),
     { version: 1, type: "risk.state", timestamp: now, payload: RiskStateSchema.parse(risk?.getState() ?? createRiskStatePlaceholder(now)) },
     { version: 1, type: "execution.state", timestamp: now, payload: AssistedExecutionStateSchema.parse(execution?.getState() ?? createExecutionStatePlaceholder(now)) },
+    { version: 1, type: "live.automation.state", timestamp: now, payload: liveAutomation?.getState() ?? createLiveAutomationPlaceholder(now) },
+    { version: 1, type: "live.canary.state", timestamp: now, payload: liveCanary?.getState() ?? createLiveCanaryPlaceholder(now) },
   ];
   if (canSendFinancial) {
     if (isKcex && latest) {
@@ -761,7 +940,7 @@ function initialEvents(
       timestamp: now,
       payload: {
         status: "OK",
-        liveTrading: false,
+        liveTrading: liveAutomation?.getState().liveTrading ?? false,
         uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
         resilienceStatus: resilience?.getState().status ?? "IDLE",
       },
@@ -790,6 +969,11 @@ export function createDashboardServer(options: DashboardServerOptions): Server {
           options.protection,
           options.scheduler,
           options.resilience,
+          options.authRecovery,
+          options.liveAutomation,
+          options.liveCanary,
+          options.verificationReportStore,
+          options.onVerificationReportChanged,
         );
         if (!handled) await serveStatic(request, response, options.staticRoot, loopbackHost);
         if (!handled && !response.writableEnded) sendJson(response, 404, { error: "Not found." });
@@ -801,6 +985,8 @@ export function createDashboardServer(options: DashboardServerOptions): Server {
           sendJson(response, error.status, { error: error.code });
         } else if (error instanceof ProtectionServiceError) {
           sendJson(response, error.status, { error: error.code });
+        } else if (error instanceof LiveAutomationBlockedError) {
+          sendJson(response, 409, { error: "LIVE_AUTOMATION_BLOCKED", state: error.state });
         } else if (error instanceof VaultUnlockError) {
           sendJson(response, 401, { error: "Unable to unlock the credential vault." });
         } else if (error instanceof VaultLockedError) {
@@ -834,6 +1020,8 @@ export function createDashboardServer(options: DashboardServerOptions): Server {
     for (const event of initialEvents(
       options.auth.getState(), startedAt, options.futuresRead, options.paperTrading, options.risk,
       options.execution, options.protection, options.scheduler, options.resilience,
+      options.liveAutomation, options.authRecovery,
+      options.liveCanary,
     )) {
       webSocket.send(JSON.stringify(event));
     }

@@ -13,9 +13,9 @@ describe("Task 001 configuration", () => {
     expect(config.PAPER_FEE_RATE).toBe(0);
   });
 
-  it("accepts fixture execution for CI and rejects an unsupported KCEX writer", () => {
+  it("accepts fixture and KCEX providers while live execution remains independently gated", () => {
     expect(loadConfig({ LIVE_EXECUTION_PROVIDER: "FIXTURE" }, () => undefined).LIVE_EXECUTION_PROVIDER).toBe("FIXTURE");
-    expect(() => loadConfig({ LIVE_EXECUTION_PROVIDER: "KCEX" }, () => undefined)).toThrow();
+    expect(loadConfig({ LIVE_EXECUTION_PROVIDER: "KCEX" }, () => undefined).LIVE_EXECUTION_PROVIDER).toBe("KCEX");
   });
 
   it("accepts only a bounded finite simulated paper fee rate", () => {
@@ -25,15 +25,23 @@ describe("Task 001 configuration", () => {
     expect(() => loadConfig({ PAPER_FEE_RATE: "NaN" }, () => undefined)).toThrow();
   });
 
-  it("ignores an attempt to enable live trading", () => {
-    const warnings: string[] = [];
-    const config = loadConfig(
-      { LIVE_TRADING: "true" },
-      (message) => warnings.push(message),
-    );
-
-    expect(config.LIVE_TRADING).toBe(false);
-    expect(warnings).toHaveLength(1);
+  it("requires provider and explicit platform authorization before LIVE_TRADING=true", () => {
+    expect(() => loadConfig({ LIVE_TRADING: "true" }, () => undefined)).toThrow();
+    expect(() => loadConfig({ LIVE_TRADING: "true", LIVE_EXECUTION_PROVIDER: "KCEX" }, () => undefined)).toThrow();
+    expect(loadConfig({
+      LIVE_TRADING: "true",
+      AUTH_PROVIDER: "KCEX",
+      LIVE_EXECUTION_PROVIDER: "KCEX",
+      KCEX_AUTOMATION_AUTHORIZED: "true",
+    }, () => undefined).LIVE_TRADING).toBe(true);
+    expect(() => loadConfig({
+      LIVE_TRADING: "true",
+      AUTH_PROVIDER: "KCEX",
+      LIVE_EXECUTION_PROVIDER: "KCEX",
+      KCEX_AUTOMATION_AUTHORIZED: "true",
+      KCEX_BASE_URL: "https://evil.example.invalid",
+    }, () => undefined)).toThrow();
+    expect(loadConfig({}, () => undefined).KCEX_AUTOMATION_AUTHORIZED).toBe(false);
   });
 
   it("requires an explicit provider value for KCEX adapter selection", () => {

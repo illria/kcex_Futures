@@ -41,7 +41,7 @@ describe("TASK-007 safety boundaries", () => {
       maxDailyLossUsdt: 50,
       maxConsecutiveFailures: 3,
     });
-    expect(loadConfig({ LIVE_TRADING: "true" }, () => undefined).LIVE_TRADING).toBe(false);
+    expect(() => loadConfig({ LIVE_TRADING: "true" }, () => undefined)).toThrow();
     expect(loadConfig({ RISK_MAX_MARGIN_USDT: "25", RISK_MAX_LEVERAGE: "5" }, () => undefined).RISK_LIMITS)
       .toMatchObject({ maxMarginUsdt: 25, maxLeverage: 5 });
     for (const environment of [

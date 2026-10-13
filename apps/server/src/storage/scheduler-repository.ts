@@ -23,6 +23,7 @@ const SLOT_COLUMNS = `
   due_at AS dueAt,
   status,
   execution_attempt_id AS executionAttemptId,
+  live_execution_attempt_id AS liveExecutionAttemptId,
   completed_at AS completedAt,
   missed_at AS missedAt,
   miss_reason AS missReason,
@@ -64,7 +65,7 @@ export class SchedulerRepository {
       updatedAt: timestamp,
       slots,
     });
-    if (slots.some((slot) => slot.status !== "SCHEDULED" || slot.executionAttemptId !== null)) {
+    if (slots.some((slot) => slot.status !== "SCHEDULED" || slot.executionAttemptId !== null || slot.liveExecutionAttemptId !== null)) {
       throw new StorageDataIntegrityError("new scheduler slots");
     }
 
@@ -250,7 +251,7 @@ export class SchedulerRepository {
 
       const updatedAt = this.timestamp();
       const changed = this.database.prepare(`
-        UPDATE scheduler_slots SET status = 'COMPLETED', execution_attempt_id = ?, completed_at = ?,
+        UPDATE scheduler_slots SET status = 'COMPLETED', execution_attempt_id = ?, live_execution_attempt_id = NULL, completed_at = ?,
           updated_at = ?, version = version + 1
         WHERE id = ? AND version = ? AND status IN ('DUE', 'SCHEDULED')
       `).run(input.executionAttemptId, attempt.confirmedAt, updatedAt, input.slotId, input.expectedVersion);
@@ -268,6 +269,57 @@ export class SchedulerRepository {
         "SCHEDULER_SLOT_COMPLETED",
         "A scheduled slot matched one manually confirmed fixture entry.",
         { ...slotAuditPayload(slot), executionAttemptId: input.executionAttemptId },
+      ));
+      this.database.exec("COMMIT;");
+    } catch (error) {
+      try { this.database.exec("ROLLBACK;"); } catch { /* Preserve the original transition error. */ }
+      throw error;
+    }
+    const stored = this.getSlot(input.slotId);
+    if (!stored) throw new StorageDataIntegrityError("scheduler slot");
+    return stored;
+  }
+
+  completeSlotWithLiveAttempt(input: {
+    slotId: string;
+    expectedVersion: number;
+    liveExecutionAttemptId: string;
+  }): SchedulerSlot {
+    this.database.exec("BEGIN IMMEDIATE;");
+    try {
+      const slot = this.readSlot(input.slotId);
+      if (!slot || slot.status !== "DUE" || slot.version !== input.expectedVersion) throw new SchedulerSlotConflictError();
+      const attempt = this.database.prepare(`
+        SELECT attempt_type AS attemptType, status, date_key AS dateKey, slot_index AS slotIndex, side, confirmed_at AS confirmedAt
+        FROM live_execution_attempts WHERE attempt_id = ?
+      `).get(input.liveExecutionAttemptId) as {
+        attemptType?: string; status?: string; dateKey?: string; slotIndex?: number; side?: string; confirmedAt?: string | null;
+      } | undefined;
+      if (!attempt || attempt.attemptType !== "SCHEDULED" || attempt.status !== "CONFIRMED" || attempt.dateKey !== slot.dateKey
+        || Number(attempt.slotIndex) !== slot.slotIndex || attempt.side !== slot.side || typeof attempt.confirmedAt !== "string") {
+        throw new SchedulerSlotConflictError();
+      }
+      const confirmedMs = Date.parse(attempt.confirmedAt);
+      const dueMs = Date.parse(slot.dueAt);
+      if (!Number.isFinite(confirmedMs) || confirmedMs < dueMs || confirmedMs > dueMs + GRACE_MS) throw new SchedulerSlotConflictError();
+      const updatedAt = this.timestamp();
+      const changed = this.database.prepare(`
+        UPDATE scheduler_slots SET status = 'COMPLETED', execution_attempt_id = NULL,
+          live_execution_attempt_id = ?, completed_at = ?, updated_at = ?, version = version + 1
+        WHERE id = ? AND version = ? AND status = 'DUE'
+      `).run(input.liveExecutionAttemptId, attempt.confirmedAt, updatedAt, input.slotId, input.expectedVersion);
+      if (Number(changed.changes) !== 1) throw new SchedulerSlotConflictError();
+      const completed = this.database.prepare("SELECT COUNT(*) AS count FROM scheduler_slots WHERE date_key = ? AND status = 'COMPLETED'")
+        .get(slot.dateKey) as { count?: number | bigint } | undefined;
+      const count = Number(completed?.count);
+      if (!Number.isSafeInteger(count) || count < 1) throw new StorageDataIntegrityError("scheduler completed count");
+      const header = this.database.prepare("UPDATE daily_plans SET completed = ?, updated_at = ? WHERE date_key = ?")
+        .run(count, updatedAt, slot.dateKey);
+      if (Number(header.changes) !== 1) throw new StorageDataIntegrityError("daily plan completion count");
+      this.auditEvents.appendAuditEvent(schedulerAudit(
+        "SCHEDULER_SLOT_COMPLETED_LIVE",
+        "A scheduler slot was completed after fresh live position confirmation.",
+        { ...slotAuditPayload(slot), liveExecutionAttemptId: input.liveExecutionAttemptId },
       ));
       this.database.exec("COMMIT;");
     } catch (error) {
@@ -336,12 +388,12 @@ export class SchedulerRepository {
   private insertSlot(slot: SchedulerSlot): void {
     this.database.prepare(`
       INSERT INTO scheduler_slots(
-        id, date_key, slot_index, symbol, side, due_at, status, execution_attempt_id,
+        id, date_key, slot_index, symbol, side, due_at, status, execution_attempt_id, live_execution_attempt_id,
         completed_at, missed_at, miss_reason, created_at, updated_at, version
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       slot.id, slot.dateKey, slot.slotIndex, slot.symbol, slot.side, slot.dueAt, slot.status,
-      slot.executionAttemptId, slot.completedAt, slot.missedAt, slot.missReason,
+      slot.executionAttemptId, slot.liveExecutionAttemptId, slot.completedAt, slot.missedAt, slot.missReason,
       slot.createdAt, slot.updatedAt, slot.version,
     );
   }
