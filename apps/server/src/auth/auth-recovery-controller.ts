@@ -101,7 +101,7 @@ export class AuthRecoveryController {
     const authState = this.options.auth.getState();
     const authMethod = this.options.auth.getRecoveryAuthMethod?.() ?? this.options.auth.getAuthMethod();
     if (authMethod === "GOOGLE") {
-      this.options.pauseAutoLive?.();
+      if (resumeIntent) this.options.pauseAutoLive?.();
       return this.updateState({ status: "GOOGLE_OAUTH_REQUIRED", reason: "GOOGLE_OAUTH_REQUIRED" });
     }
     if (!this.options.vault.isUnlocked) return this.manualAction("VAULT_LOCKED");
@@ -109,7 +109,7 @@ export class AuthRecoveryController {
 
     if (authMethod !== "PASSWORD") return this.manualAction("AUTH_METHOD_UNKNOWN", true);
 
-    this.options.pauseAutoLive?.();
+    if (resumeIntent) this.options.pauseAutoLive?.();
     this.updateState({ status: "RECOVERING", attemptCount: 1, reason: "SESSION_LOST" });
     const operation = this.options.auth.login()
       .then((result) => this.handleLoginResult(result))
