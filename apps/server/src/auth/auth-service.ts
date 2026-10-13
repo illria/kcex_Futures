@@ -266,7 +266,7 @@ export class AuthService {
       this.authMethod = successfulMethod;
       if (successfulMethod === "PASSWORD" || successfulMethod === "GOOGLE") this.sessionOriginMethod = successfulMethod;
     }
-    if (result !== "OTP_REQUIRED") this.pendingAuthMethod = null;
+    this.pendingAuthMethod = null;
     this.transition(result);
     if (result === "AUTHENTICATED") await this.persistSessionIfAvailable();
   }
